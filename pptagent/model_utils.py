@@ -17,34 +17,43 @@ from pptagent.utils import (
 
 logger = get_logger(__name__)
 
+
+import os
+from os.path import join
+import glob
+from fasttext import load_model
+from huggingface_hub import hf_hub_download
+from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE
+
 # Lazy loading cache for the language ID model
 _LID_MODEL = None
 
 
 def _get_lid_model():
-    from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE
-
     """Get the language ID model, loading it lazily on first access."""
     global _LID_MODEL
     if _LID_MODEL is None:
-        from fasttext import load_model
-        from huggingface_hub import hf_hub_download
-
-        lid_pattern = join(
-            HUGGINGFACE_HUB_CACHE,
-            "models--julien-c--fasttext-language-id",
-            "*/*/lid.176.bin",
-        )
-        lid_files = glob(lid_pattern)
-        if lid_files:
-            _LID_MODEL = load_model(lid_files[0])
+        # 1. 优先使用本地挂载的模型
+        local_model = "/opt/workspace/lid.176.bin"
+        if os.path.exists(local_model):
+            _LID_MODEL = load_model(local_model)
         else:
-            _LID_MODEL = load_model(
-                hf_hub_download(
+            # 2. 先查 Hugging Face 缓存
+            lid_pattern = join(
+                HUGGINGFACE_HUB_CACHE,
+                "models--julien-c--fasttext-language-id",
+                "*/*/lid.176.bin",
+            )
+            lid_files = glob.glob(lid_pattern)
+            if lid_files:
+                _LID_MODEL = load_model(lid_files[0])
+            else:
+                # 3. 缓存里没有就下载
+                downloaded_path = hf_hub_download(
                     repo_id="julien-c/fasttext-language-id",
                     filename="lid.176.bin",
                 )
-            )
+                _LID_MODEL = load_model(downloaded_path)
     return _LID_MODEL
 
 

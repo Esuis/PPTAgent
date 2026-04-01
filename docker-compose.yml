@@ -1,12 +1,12 @@
 services:
   deeppresenter-host:
-    build:
-      context: ./deeppresenter/docker
-      dockerfile: Host.Dockerfile
-      args:
-        http_proxy: ${http_proxy:-}
-        https_proxy: ${https_proxy:-}
-        no_proxy: ${no_proxy:-}
+    # build:
+    #   context: ./deeppresenter/docker
+    #   dockerfile: Host.Dockerfile
+    #   args:
+    #     http_proxy: ${http_proxy:-}
+    #     https_proxy: ${https_proxy:-}
+    #     no_proxy: ${no_proxy:-}
     image: deeppresenter-host:0.1.0
     container_name: deeppresenter-host
     ports:
@@ -19,6 +19,8 @@ services:
       - ./workspace:/opt/workspace
       - ./deeppresenter:/usr/src/pptagent/deeppresenter
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./lid.176.bin:/opt/workspace/lid.176.bin:ro
+      - ./pptagent:/usr/src/pptagent/pptagent
 
 volumes:
   deeppresenter_workspace:

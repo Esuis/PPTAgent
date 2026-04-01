@@ -1,19 +1,27 @@
-# Partly copied from wonderwhy-er/DesktopCommanderMCP
-# ? global dependency
 FROM node:lts-bookworm-slim
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY --from=docker:26-cli /usr/local/bin/docker /usr/local/bin/docker
 
-# Install ca-certificates first to avoid GPG signature issues, then other packages
 RUN apt-get update && \
     apt-get install -y --fix-missing --no-install-recommends ca-certificates && \
     update-ca-certificates && \
-    apt-get install -y --no-install-recommends git bash curl wget unzip ripgrep vim sudo g++ locales
+    apt-get install -y --no-install-recommends \
+        git \
+        bash \
+        curl \
+        wget \
+        unzip \
+        ripgrep \
+        vim \
+        sudo \
+        g++ \
+        locales
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
 
-# Install Chromium and dependencies
 RUN apt-get update && apt-get install -y --fix-missing --no-install-recommends \
         chromium \
         fonts-liberation \
@@ -48,34 +56,40 @@ RUN apt-get update && apt-get install -y --fix-missing --no-install-recommends \
         fonts-ipafont \
         fonts-ipaexfont \
         fonts-comic-neue \
-        imagemagick
+        imagemagick \
+        libreoffice \
+        poppler-utils && \
+    rm -rf /var/lib/apt/lists/*
 
-# Clone project + install node deps
-RUN set -ex && \
-    npm config set registry https://registry.npmmirror.com && \
-    mkdir -p /usr/src/pptagent && \
-    cd /usr/src/pptagent && \
-    git clone https://github.com/icip-cas/PPTAgent.git . && \
-    npm install --ignore-scripts && \
-    npx playwright install --with-deps chromium && \
-    cd deeppresenter/html2pptx && \
-    npm install
+# Clone project
+RUN set -ex \
+    && npm config set registry https://registry.npmmirror.com \
+    && mkdir -p /usr/src/pptagent \
+    && cd /usr/src/pptagent \
+    && git clone https://github.com/icip-cas/PPTAgent.git .
 
-# ? project dependency
 WORKDIR /usr/src/pptagent
 
-# Set environment variables
+# Install node deps only where package.json exists
+RUN npm install --prefix deeppresenter/html2pptx
+
 ENV PATH="/opt/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     VIRTUAL_ENV="/opt/.venv" \
     DEEPPRESENTER_WORKSPACE_BASE="/opt/workspace"
 
-# Create Python virtual environment and install packages
 RUN uv venv --python 3.13 $VIRTUAL_ENV && \
-    uv pip install -e .
+    uv pip install -e . && \
+    playwright install-deps && \
+    playwright install chromium
 
-# install libreoffice for pptx2image converting
-RUN apt install -y libreoffice poppler-utils
+WORKDIR /usr/src/pptagent/deeppresenter/html2pptx/
+
+RUN npx playwright install
+
+WORKDIR /usr/src/pptagent/
+
+RUN npx playwright install
 
 RUN fc-cache -f
 
