@@ -41,7 +41,7 @@ class LLM:
         return_json: bool = False,
         return_message: bool = False,
         response_format: BaseModel | None = None,
-        stream: bool = False,
+        stream: bool = True,
         **client_kwargs,
     ) -> str | dict | list | tuple | Generator[str, None, None]:
         """
@@ -303,7 +303,7 @@ class AsyncLLM(LLM):
         return_json: bool = False,
         return_message: bool = False,
         response_format: BaseModel | None = None,
-        stream: bool = False,
+        stream: bool = True,
         **client_kwargs,
     ) -> str | dict | tuple | AsyncGenerator[str, None]:
         """
