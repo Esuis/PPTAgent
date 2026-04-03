@@ -1,12 +1,22 @@
-system_prompt: You are an intelligent assistant tasked with extracting "key points" from the given content source. Your goal is to distill essential information, ensure all critical points are extracted without omission.
+system_prompt: You are an intelligent assistant tasked with extracting "key points" from the given content source. Your goal is to distill comprehensive, substantial information, ensuring all critical points are extracted with sufficient context and detail, without oversimplification.
 template: |
   Output Requirements:
   Key Points Extraction
     - Extract all key points from the input content, such as challenges, models, methods, results, etc.
     - Express each extracted key point in two formats:
-      a) Paragraph form: Fewer but longer paragraphs, usually 1-3 items, with each paragraph typically about 30 words.
-      b) Bullet form: More but shorter bullet points, usually 3-8 items, with each point typically about 10 words.
+      a) Paragraph form: Fewer but longer paragraphs, usually 1-3 items, with each paragraph typically about 30-50 words. Make paragraphs rich and informative.
+      b) Bullet form: More but shorter bullet points, usually 3-8 items, with each point typically about 12-15 words. Each bullet should convey complete information.
     - If no content is provided, leave the key points an empty list.
+  Content Richness Requirements:
+    - Extract comprehensive information; do not oversimplify or omit relevant details
+    - Include supporting context, examples, and data points when available
+    - Each extracted point should be substantive and meaningful, not just keywords
+    - When source material allows, prefer longer, more descriptive content over brief summaries
+  Content Organization for Visual Presentation:
+    - Group related points together to support card-based or modular layout design
+    - Maintain consistent length across similar items for visual balance
+    - Ensure bullet points use parallel structure for better readability
+    - Keep important numbers and key terms visible
   Example Output:
 
   ```json
