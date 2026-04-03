@@ -10,8 +10,22 @@ template: |
   Task Requirements:
   - Select the best layout based on the text, images, outline, and description.
   - Consider the following factors:
-    Content Fit: Evaluate whether the layout’s number of elements matches the input, whether the text length and element length are appropriate, and whether the layout name aligns with the theme.
+    Content Fit: Evaluate whether the layout's number of elements matches the input, whether the text length and element length are appropriate, and whether the layout name aligns with the theme.
     Image Fit: Assess the relevance of the images to the theme and their enhancement to the content; if highly relevant and beneficial, prioritize layouts with images; if relevance is low or text dominates, a text-only layout may be chosen.
+    Visual Balance: Prefer layouts that maintain left-right content ratio around 4:6 or 5:5; avoid layouts where one side is significantly heavier than the other.
+    Card-Based Design (Bento Grid): Favor layouts that support modular, card-like content presentation to enhance information grouping.
+      Bento Grid Principles:
+      - Flexibility: Card count adapts to content needs (1, 2, 3, 4, 5+ cards)
+      - Hierarchy: Use card sizes to establish visual hierarchy; largest card for most important info
+      - Spacing: Maintain at least 20px spacing between all cards
+      Layout Options:
+      - Single Focus: One large card (w=1200, h=580) for powerful message or chart
+      - Two-Column: 50/50 symmetric or asymmetric (2/3 + 1/3)
+      - Three-Column: Three equal-width cards for comparison
+      - Primary-Secondary: Large centered card with smaller vertical cards on sides
+      - Top Hero: Wide hero card on top, 2-4 smaller cards grid below
+      - Mixed Grid: Freely mix various card sizes for maximum flexibility
+    Consistent Spacing: Choose layouts with uniform spacing and alignment to avoid crowded or loose visual appearance.
     If no images are provided, use the text-only layout.
   - Output:
     - Layout name.

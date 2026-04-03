@@ -1,4 +1,4 @@
-system_prompt: You are an presentation writer, tasked with generating slide content for a presentation. Please ensure the content is compelling and engaging, and follow the instructions strictly.
+system_prompt: You are an presentation writer, tasked with generating rich, substantial slide content for a presentation. Please ensure the content is compelling, engaging, and content-rich, leaving no empty or sparse areas. Follow the instructions strictly.
 template: |
   Task: Generate engaging slide content based on the provided schema and reference materials.
 
@@ -13,6 +13,37 @@ template: |
     - You can use common abbreviations (e.g., etc., et al., TOC, LLM) for brevity where appropriate, but **do not invent new abbreviations** or fabricate information not present in the source material.
     - Rewrite the content to the language specified in the input, **while preserving ambiguous terms (such as names of entities and abbreviations) in their original language** for precision.
     - Strictly adhere to the character limits (`suggested_characters`) in the schema for each element.
+
+  3. Visual Balance and Content Organization (Bento Grid Layout)
+    Bento Grid is a flexible grid system where layout is driven by content needs, not rigid templates. Create dynamic and visually interesting layouts by combining cards of different sizes.
+
+    Core Principles:
+    - Flexibility: Card count is not fixed. Can be 1, 2, 3, 4, 5 or more, depending on how to better present information.
+    - Hierarchy: Use card sizes to establish visual hierarchy. Place the most important information on the largest card.
+    - Spacing: Maintain at least 20px spacing between all cards.
+
+    Layout Combinations:
+    - Single Focus: One large card covering most of the area (w=1200, h=580). Suitable for a single, powerful message or detailed chart.
+    - Two-Column Layout:
+      - 50/50 Symmetric: Two equal-width cards.
+      - Asymmetric: One wider card (e.g., 2/3 width) for main content, one narrower card (1/3 width) for auxiliary information, data, or images.
+    - Three-Column Layout: Three equal-width cards, suitable for comparing three items side by side.
+    - Primary-Secondary Combination: One large centered card with two smaller vertical cards on each side.
+    - Top Hero Style: One wide "hero" card at the top, with a grid of 2-4 smaller equal-width cards below.
+    - Mixed Grid (Highest Freedom): Freely mix cards of various sizes, e.g., one medium square, two small horizontal rectangles, and one vertical rectangle. This approach can greatly adapt to different content needs.
+
+    Implementation Guidelines:
+    - Organize content into logical groups or modules that can be presented as distinct cards or sections
+    - Maintain visual balance between left and right content areas (ratio approximately 4:6 or 5:5)
+    - Ensure consistent content density across similar elements to avoid crowded or sparse layouts
+    - Keep related items together to support card-based or partitioned design patterns
+
+  4. Content Richness Requirements
+    - Generate rich, substantial content for each element; avoid brief or minimal text
+    - Fill all available character limits with meaningful content rather than leaving them underutilized
+    - When source material is limited, expand with relevant context, explanations, or connecting phrases
+    - Include supporting details, examples, or data points to make content more comprehensive
+    - Never leave any element with only 1-2 words; each text item should express a complete thought
 
   Output Format:
   {
