@@ -1,6 +1,7 @@
 import asyncio
 import json
 import random
+from collections.abc import AsyncGenerator
 from itertools import cycle, product
 from math import ceil, gcd, lcm
 from pathlib import Path
@@ -139,6 +140,21 @@ class Endpoint(BaseModel):
         )
         return response
 
+    async def stream_call(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> AsyncGenerator[str, None]:
+        """Execute a streaming chat call using the endpoint client"""
+        stream_response = await self._client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+            **self.sampling_parameters,
+        )
+        async for chunk in stream_response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
 
 class LLM(BaseModel):
     """LLM Client Manager"""
@@ -270,6 +286,20 @@ class LLM(BaseModel):
                         identifider = endpoint.model
                     logging_openai_exceptions(identifider, e)
         raise ValueError(f"All models failed after {retry_times} retries:\n{errors}")
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]] | str,
+    ) -> AsyncGenerator[str, None]:
+        """Streaming interface for chat calls"""
+        if isinstance(messages, str):
+            messages = [{"role": "user", "content": messages}]
+
+        # 流式输出使用第一个端点
+        endpoint = self._endpoints[0]
+        async with self._semaphore:
+            async for chunk in endpoint.stream_call(messages):
+                yield chunk
 
     async def generate_image(
         self,
