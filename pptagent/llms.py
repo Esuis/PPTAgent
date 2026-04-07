@@ -1,12 +1,8 @@
 import base64
 import re
-import threading
-from collections.abc import AsyncGenerator, Generator
 from dataclasses import dataclass
 
-from oaib import Auto
 from openai import AsyncOpenAI, OpenAI
-from openai.types.chat import ChatCompletion
 from pydantic import BaseModel
 
 from pptagent.utils import get_json_from_response, get_logger, tenacity_decorator
@@ -41,9 +37,8 @@ class LLM:
         return_json: bool = False,
         return_message: bool = False,
         response_format: BaseModel | None = None,
-        stream: bool = True,
         **client_kwargs,
-    ) -> str | dict | list | tuple | Generator[str, None, None]:
+    ) -> str | dict | list | tuple:
         """
         Call the language model with a prompt and optional images.
 
@@ -54,86 +49,61 @@ class LLM:
             history (list): The conversation history.
             return_json (bool): Whether to return the response as JSON.
             return_message (bool): Whether to return the message.
-            stream (bool): Whether to stream the response.
             **client_kwargs: Additional keyword arguments to pass to the client.
 
         Returns:
-            Union[str, Dict, List, Tuple, Generator]: The response from the model.
+            Union[str, Dict, List, Tuple]: The response from the model.
         """
         if history is None:
             history = []
         system, message = self.format_message(content, images, system_message)
         try:
-            if stream:
-                # 流式输出
-                if response_format is not None:
-                    # 流式不支持 response_format，先非流式获取再解析
-                    completion: ChatCompletion = self.client.chat.completions.create(
-                        model=self.model,
-                        messages=system + history + message,
-                        response_format=response_format,
-                        **client_kwargs,
-                    )
-                    response = completion.choices[0].message.content
-                    message.append({"role": "assistant", "content": response})
-                    return self.__post_process__(response, message, return_json, return_message)
-                else:
-                    stream_response = self.client.chat.completions.create(
-                        model=self.model,
-                        messages=system + history + message,
-                        stream=True,
-                        **client_kwargs,
-                    )
-                    return self._stream_generator(stream_response, message, return_message)
+            # 统一使用流式请求，收集完整响应后返回
+            if response_format is not None:
+                # 流式不支持 response_format，用流式请求获取后解析
+                stream_response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=system + history + message,
+                    response_format=response_format,
+                    stream=True,
+                    **client_kwargs,
+                )
             else:
-                # 非流式输出
-                if response_format is not None:
-                    completion: ChatCompletion = self.client.chat.completions.parse(
-                        model=self.model,
-                        messages=system + history + message,
-                        response_format=response_format,
-                        **client_kwargs,
-                    )
-                else:
-                    completion: ChatCompletion = self.client.chat.completions.create(
-                        model=self.model,
-                        messages=system + history + message,
-                        **client_kwargs,
-                    )
-                response = completion.choices[0].message.content
-                message.append({"role": "assistant", "content": response})
-                return self.__post_process__(response, message, return_json, return_message)
+                stream_response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=system + history + message,
+                    stream=True,
+                    **client_kwargs,
+                )
+            # 收集流式响应
+            response = self._collect_stream_response(stream_response, message)
+            return self.__post_process__(response, message, return_json, return_message)
 
         except Exception as e:
             logger.warning("Error in LLM (%s) service: %s", self.model, e)
             raise e
 
-    def _stream_generator(self, stream_response, message: list, return_message: bool = False):
+    def _collect_stream_response(self, stream_response, message: list) -> str:
         """
-        Generator for streaming responses.
+        Collect streaming response and return complete content.
         
         Args:
             stream_response: The streaming response from the API.
             message (list): The message history.
-            return_message (bool): Whether to return the message history.
             
-        Yields:
-            str: Chunks of the response.
+        Returns:
+            str: The complete response content.
         """
         full_response = []
         for chunk in stream_response:
             if chunk.choices and chunk.choices[0].delta.content:
                 content = chunk.choices[0].delta.content
                 full_response.append(content)
-                yield content
         
         # 保存完整响应到消息历史
         response = "".join(full_response)
         message.append({"role": "assistant", "content": response})
-        
-        # 如果需要返回消息历史，在最后 yield
-        if return_message:
-            yield (response, message)
+        return response
 
     def __post_process__(
         self,
@@ -266,7 +236,6 @@ class LLM:
 
 @dataclass
 class AsyncLLM(LLM):
-    use_batch: bool = False
     """
     Asynchronous wrapper class for language model interaction.
     """
@@ -285,13 +254,6 @@ class AsyncLLM(LLM):
             api_key=self.api_key,
             timeout=self.timeout,
         )
-        if self.use_batch:
-            self.batch = Auto(
-                base_url=self.base_url,
-                api_key=self.api_key,
-                timeout=self.timeout,
-                loglevel=0,
-            )
 
     @tenacity_decorator
     async def __call__(
@@ -303,12 +265,11 @@ class AsyncLLM(LLM):
         return_json: bool = False,
         return_message: bool = False,
         response_format: BaseModel | None = None,
-        stream: bool = True,
         **client_kwargs,
-    ) -> str | dict | tuple | AsyncGenerator[str, None]:
+    ) -> str | dict | tuple:
         """
         Asynchronously call the language model with a prompt and optional images.
-
+    
         Args:
             content (str): The prompt content.
             images (str or list[str]): An image file path or list of image file paths.
@@ -317,124 +278,64 @@ class AsyncLLM(LLM):
             return_json (bool): Whether to return the response as JSON.
             return_message (bool): Whether to return the message.
             response_format (BaseModel): The response format for structured output.
-            stream (bool): Whether to stream the response.
             **client_kwargs: Additional keyword arguments to pass to the client.
-
+    
         Returns:
-            Union[str, Dict, List, Tuple, AsyncGenerator]: The response from the model.
+            Union[str, Dict, Tuple]: The response from the model.
         """
-        if stream:
-            # 流式输出模式，不使用 batch
-            if history is None:
-                history = []
-            system, message = self.format_message(content, images, system_message)
-            try:
-                if response_format is not None:
-                    # 流式不支持 response_format，先非流式获取
-                    completion = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=system + history + message,
-                        response_format=response_format,
-                        **client_kwargs,
-                    )
-                    response = completion.choices[0].message.content
-                    message.append({"role": "assistant", "content": response})
-                    return self.__post_process__(response, message, return_json, return_message)
-                else:
-                    stream_response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=system + history + message,
-                        stream=True,
-                        **client_kwargs,
-                    )
-                    return self._async_stream_generator(stream_response, message, return_message)
-            except Exception as e:
-                logger.error("Error in AsyncLLM streaming call: %s", e)
-                raise e
-        
-        # 非流式输出模式
-        if self.use_batch and threading.current_thread() is threading.main_thread():
-            self.batch = Auto(
-                base_url=self.base_url,
-                api_key=self.api_key,
-                timeout=self.timeout,
-                loglevel=0,
-            )
-        elif self.use_batch:
-            logger.warning(
-                "Warning: AsyncLLM is not running in the main thread, may cause race condition."
-            )
         if history is None:
             history = []
         system, message = self.format_message(content, images, system_message)
         try:
-            if self.use_batch:
-                await self.batch.add(
-                    "chat.completions.create",
+            # 统一使用流式请求，收集完整响应后返回
+            if response_format is not None:
+                stream_response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=system + history + message,
                     response_format=response_format,
+                    stream=True,
                     **client_kwargs,
                 )
-                completion = await self.batch.run()
-                if "result" not in completion or len(completion["result"]) != 1:
-                    raise ValueError(
-                        f"The length of completion result should be 1, but got {completion}.\nRace condition may have occurred if multiple values are returned.\nOr, there was an error in the LLM call, use the synchronous version to check."
-                    )
-                completion = ChatCompletion(**completion["result"][0])
             else:
-                if response_format is None:
-                    completion = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=system + history + message,
-                        **client_kwargs,
-                    )
-                else:
-                    completion = await self.client.chat.completions.parse(
-                        model=self.model,
-                        messages=system + history + message,
-                        response_format=response_format,
-                        **client_kwargs,
-                    )
-
+                stream_response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=system + history + message,
+                    stream=True,
+                    **client_kwargs,
+                )
+            # 收集流式响应
+            response = await self._async_collect_stream_response(stream_response, message)
+            return self.__post_process__(response, message, return_json, return_message)
+    
         except Exception as e:
             logger.error("Error in AsyncLLM call: %s", e)
             raise e
-        response = completion.choices[0].message.content
-        message.append({"role": "assistant", "content": response})
-        return self.__post_process__(response, message, return_json, return_message)
 
-    async def _async_stream_generator(self, stream_response, message: list, return_message: bool = False):
+    async def _async_collect_stream_response(self, stream_response, message: list) -> str:
         """
-        Async generator for streaming responses.
+        Collect async streaming response and return complete content.
         
         Args:
             stream_response: The async streaming response from the API.
             message (list): The message history.
-            return_message (bool): Whether to return the message history.
             
-        Yields:
-            str: Chunks of the response.
+        Returns:
+            str: The complete response content.
         """
         full_response = []
         async for chunk in stream_response:
             if chunk.choices and chunk.choices[0].delta.content:
                 content = chunk.choices[0].delta.content
                 full_response.append(content)
-                yield content
         
         # 保存完整响应到消息历史
         response = "".join(full_response)
         message.append({"role": "assistant", "content": response})
-        
-        # 如果需要返回消息历史，在最后 yield
-        if return_message:
-            yield (response, message)
+        return response
 
     def __getstate__(self):
         state = self.__dict__.copy()
         state["client"] = None
-        state["batch"] = None
         return state
 
     def __setstate__(self, state: dict):
@@ -443,12 +344,6 @@ class AsyncLLM(LLM):
             base_url=self.base_url,
             api_key=self.api_key,
             timeout=self.timeout,
-        )
-        self.batch = Auto(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            timeout=self.timeout,
-            loglevel=0,
         )
 
     async def test_connection(self) -> bool:
