@@ -21,6 +21,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./lid.176.bin:/opt/workspace/lid.176.bin:ro
       - ./pptagent:/usr/src/pptagent/pptagent
+      - ./webui.py:/usr/src/pptagent/webui.py
 
 volumes:
   deeppresenter_workspace:
