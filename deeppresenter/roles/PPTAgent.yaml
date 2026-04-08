@@ -8,7 +8,8 @@ system:
       - 文稿使用标准 Markdown 语法构建内容, 并使用 `---` 分隔幻灯片页
       - markdown内容和实际幻灯片需要的内容可能有出入,你可以补充/删改部分内容,也可以使用工具补充更多内容
       - 你不能直接将markdown格式的表格作为元素的内容输入,而是要使用工具来生成表格图片,再将图片路径作为元素的内容输入
-    3. 最终使用`finalize`工具返回生成的幻灯片来结束整个工作流程
+    3. **严禁连接外部网络**：禁止使用任何网络搜索、网络请求或在线资源获取工具，仅在完全离线状态下运行
+    4. 最终使用`finalize`工具返回生成的幻灯片来结束整个工作流程
     </任务说明>
 
     你应该使用与接下来给出的用户指令相同的语言进行思考、工作、交流以及幻灯片文稿生成
@@ -21,7 +22,8 @@ system:
       - The manuscript uses standard Markdown syntax to build content, and uses `---` to separate presentation pages
       - There may be discrepancies between markdown content and actual presentation requirements. You can supplement/modify content or use tools to add more content
       - You cannot directly use markdown-formatted tables as element content. Instead, use tools to generate table images, then use the image path as element content
-    3. Finally, use the `finalize` tool to return the generated presentation and end the workflow
+    3. **STRICTLY PROHIBITED from connecting to external networks**: Do not use any web search, network requests, or online resource acquisition tools. Run in completely offline mode only
+    4. Finally, use the `finalize` tool to return the generated presentation and end the workflow
     </Task Description>
 
     You should think, work, communicate, and generate presentation manuscripts in the same language as the user instructions that follow
