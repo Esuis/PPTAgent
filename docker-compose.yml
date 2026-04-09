@@ -1,27 +1,72 @@
+version: '3.8'
+
 services:
-  deeppresenter-host:
-    # build:
-    #   context: ./deeppresenter/docker
-    #   dockerfile: Host.Dockerfile
-    #   args:
-    #     http_proxy: ${http_proxy:-}
-    #     https_proxy: ${https_proxy:-}
-    #     no_proxy: ${no_proxy:-}
-    image: deeppresenter-host:0.1.0
-    container_name: deeppresenter-host
+  # 前端服务
+  frontend:
+    image: deeppresenter-frontend:latest
+    container_name: deeppresenter-frontend
     ports:
-      - "7861:7861"
-    environment:
-      DEEPPRESENTER_HOST_WORKSPACE_BASE: ${PWD}/workspace
-      DEEPPRESENTER_WORKSPACE_BASE: /opt/workspace
-      DEEPPRESENTER_LOG_LEVEL: 0 # 0: debug, 10: info, 20: warning
+      - "3000:3000"  # Vite开发服务器端口
     volumes:
-      - ./workspace:/opt/workspace
+      # 挂载整个frontend目录（开发模式，代码修改即时生效）
+      - ./frontend:/app
+      # 排除node_modules（使用容器内的）
+      - /app/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - deeppresenter-network
+
+  # 后端API服务
+  backend:
+    image: deeppresenter-backend:latest
+    container_name: deeppresenter-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # 挂载Docker socket（用于创建sandbox容器）
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 挂载整个deeppresenter目录（开发模式，代码修改即时生效）
       - ./deeppresenter:/usr/src/pptagent/deeppresenter
+      # 排除node_modules（使用镜像内预构建的）
+      - /usr/src/pptagent/deeppresenter/html2pptx/node_modules
+      # 挂载pptagent目录
+      - ./pptagent:/usr/src/pptagent/pptagent
+      # 挂载配置文件（覆盖镜像内的配置）
+      - ./deeppresenter/config.yaml:/usr/src/pptagent/deeppresenter/config.yaml:ro
+      - ./deeppresenter/mcp.json:/root/.config/deeppresenter/mcp.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - ./lid.176.bin:/opt/workspace/lid.176.bin:ro
-      - ./pptagent:/usr/src/pptagent/pptagent
-      - ./webui.py:/usr/src/pptagent/webui.py
+      # 挂载工作空间（绑定挂载到主机目录，与 sandbox 共享文件）
+      - ./workspace:/opt/workspace
+      # 挂载缓存
+      - cache-data:/root/.cache/deeppresenter
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - CONFIG_FILE=/root/.config/deeppresenter/config.yaml
+      - MCP_FILE=/root/.config/deeppresenter/mcp.json
+      - DEEPPRESENTER_WORKSPACE_BASE=/opt/workspace
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - deeppresenter-network
 
 volumes:
-  deeppresenter_workspace:
+  workspace-data:
+    driver: local
+    name: deeppresenter-workspace
+  cache-data:
+    driver: local
+    name: deeppresenter-cache
+
+networks:
+  deeppresenter-network:
+    driver: bridge

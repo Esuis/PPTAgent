@@ -34,6 +34,37 @@
   <img src="resource/pptagent-logo.jpg" width="240px" alt="https://github.com/icip-cas/PPTAgent">
 </div>
 
+## 🚀 快速开始
+
+### 方式一：使用Docker（推荐）
+
+```bash
+# 1. 构建镜像（需要网络）
+docker compose build
+
+# 2. 启动服务
+docker compose up -d
+
+# 3. 访问应用
+# 前端: http://localhost:3000
+# 后端: http://localhost:8000
+```
+
+### 方式二：离线部署
+
+```bash
+# 在线机器
+./export-images.sh  # 导出镜像
+scp docker-images/*.tar.gz user@offline:/path/to/  # 传输
+
+# 离线机器
+gunzip -c deeppresenter-backend.tar.gz | docker load  # 加载
+gunzip -c deeppresenter-frontend.tar.gz | docker load
+docker compose up -d  # 启动
+```
+
+详见：[verify-offline.sh](verify-offline.sh) 验证离线可用性
+
 <table>
   <tr>
     <td width="50%">
@@ -93,7 +124,34 @@ If you want a fully offline setup, deploy MinerU locally and set `offline_mode: 
 
 More configurable variables can be found in [constants.py](deeppresenter/utils/constants.py).
 
-### 1. Personal Use / OpenClaw Integration: CLI
+### 1. 🐳 Docker部署（推荐）
+
+最简单的方式，开箱即用：
+
+```bash
+# 克隆仓库
+git clone https://github.com/icip-cas/PPTAgent.git
+cd PPTAgent
+
+# 准备配置文件
+cp .env.example .env
+cp deeppresenter/config.yaml.example deeppresenter/config.yaml
+cp deeppresenter/mcp.json.example deeppresenter/mcp.json
+
+# 编辑配置文件，填入API Key
+# vim .env
+# vim deeppresenter/config.yaml
+
+# 启动服务
+docker compose --profile prod up -d
+
+# 访问应用
+# 浏览器打开: http://localhost:8000
+```
+
+详细说明请查看：[容器化部署指南](DOCKER.md)
+
+### 2. Personal Use / OpenClaw Integration: CLI
 
 > [!NOTE]
 > On macOS, the CLI may automatically install several local dependencies, including Homebrew, Node.js, Docker, poppler, Playwright, and llama.cpp.
@@ -128,7 +186,7 @@ uvx pptagent generate "Q4 Report" \
 | `pptagent reset`    | Reset configuration                               |
 | `pptagent serve`    | Start the local inference service used by the CLI |
 
-### 2. Minimal Setup / Development: Build From Source
+### 3. Minimal Setup / Development: Build From Source
 
 Use this mode if you want the smallest abstraction layer and full control over dependencies during development.
 
@@ -148,10 +206,22 @@ docker build -t deeppresenter-sandbox:0.1.0 -f deeppresenter/docker/SandBox.Dock
 Start the app:
 
 ```bash
+# 方式1：使用新的Vue前端（推荐）
+# 启动后端API服务
+uv run uvicorn deeppresenter.server:app --reload --port 8000
+
+# 在另一个终端启动前端
+cd frontend
+npm install
+npm run dev
+
+# 访问 http://localhost:3000
+
+# 方式2：使用原Gradio界面（兼容模式）
 python webui.py
 ```
 
-### 3. Server Deployment: Docker Compose
+### 4. Server Deployment: Docker Compose
 
 Use this mode for a stable server environment with explicit dependencies.
 

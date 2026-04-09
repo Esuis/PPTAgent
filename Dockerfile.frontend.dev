@@ -1,0 +1,21 @@
+# DeepPresenter 前端服务Dockerfile（开发环境）
+# 使用Vite开发服务器实现热更新
+
+FROM node:lts-bookworm-slim
+
+WORKDIR /app
+
+# 复制依赖文件
+COPY frontend/package.json ./
+
+# 安装依赖
+RUN npm install
+
+# 复制前端代码（会被volume覆盖，但需要初始文件）
+COPY frontend/ .
+
+# 暴露Vite开发服务器端口
+EXPOSE 3000
+
+# 启动Vite开发服务器
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3000"]

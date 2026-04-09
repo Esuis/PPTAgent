@@ -80,6 +80,8 @@ class AgentEnv:
             "WORKSPACE": str(self.workspace),
             "HOST_WORKSPACE": host_workspace,
             "WORKSPACE_ID": self.workspace.stem,
+            "WORKSPACE_BASE": str(WORKSPACE_BASE),  # 添加 WORKSPACE_BASE
+            "HOST_WORKSPACE_BASE": host_workspace_base or str(WORKSPACE_BASE),  # 添加 HOST_WORKSPACE_BASE
             "CONFIG_FILE": str(config.file_path),
             "FASTMCP_LOG_LEVEL": "CRITICAL",
             "PACKAGE_DIR": str(PACKAGE_DIR),
