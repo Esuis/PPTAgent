@@ -1,0 +1,46 @@
+# DeepPresenter 后端服务Dockerfile（离线可用）
+# 基于 deeppresenter-host:0.1.0，确保所有依赖已预装
+
+FROM deeppresenter-host:0.1.0
+
+# 设置工作目录
+WORKDIR /usr/src/pptagent
+
+# 复制更新后的代码
+COPY deeppresenter/ ./deeppresenter/
+COPY pptagent/ ./pptagent/
+COPY pyproject.toml uv.lock ./
+
+# 安装pptagent包到已有的.venv中（使用--no-deps避免重新下载依赖）
+# 基础镜像的.venv已包含所有第三方依赖
+RUN uv pip install -e . --no-deps --python /opt/.venv/bin/python && \
+    echo "✓ pptagent包已安装（使用已有依赖）"
+
+# 确保Playwright已安装
+RUN playwright install chromium 2>/dev/null || true
+
+# 刷新字体缓存
+RUN fc-cache -f
+
+# 创建工作目录
+RUN mkdir -p /opt/workspace && \
+    mkdir -p /root/.cache/deeppresenter/logs && \
+    mkdir -p /root/.config/deeppresenter
+
+# 设置环境变量
+ENV PATH="/opt/.venv/bin:${PATH}" \
+    PYTHONUNBUFFERED=1 \
+    VIRTUAL_ENV="/opt/.venv" \
+    DEEPPRESENTER_WORKSPACE_BASE="/opt/workspace" \
+    LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8
+
+# 暴露端口
+EXPOSE 8000
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/docs || exit 1
+
+# 启动FastAPI服务器（直接使用Python，不使用uv run避免检查依赖）
+CMD ["bash", "-c", "umask 000 && /opt/.venv/bin/python -m uvicorn deeppresenter.server:app --host 0.0.0.0 --port 8000"]

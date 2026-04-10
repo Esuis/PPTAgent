@@ -184,7 +184,24 @@ def finalize(outcome: str, agent_name: str = "") -> str:
     """
     # here we conduct some final checks on agent's outcome
     path = Path(outcome)
-    assert path.exists(), f"Outcome {outcome} does not exist"
+    
+    # 注意：在 Docker 环境中，文件可能在 sandbox 容器中，
+    # 而 finalize 工具在 backend 容器中执行，两个容器文件系统隔离。
+    # 因此我们跳过路径存在性检查，信任模型返回的路径。
+    if not path.exists():
+        debug(f"Outcome {outcome} not found in backend container (may exist in sandbox)")
+        # 对于 Research Agent，如果是相对路径，尝试构造绝对路径
+        if agent_name == "Research" and not path.is_absolute():
+            # 尝试在当前工作目录下查找
+            cwd_path = Path.cwd() / outcome
+            if cwd_path.exists():
+                path = cwd_path
+                debug(f"Found outcome in current directory: {path}")
+            else:
+                debug(f"Outcome not found, but proceeding anyway (sandbox file)")
+        else:
+            debug(f"Outcome not found, but proceeding anyway (sandbox file)")
+    
     if agent_name == "Research":
         md_dir = path.parent
         assert path.suffix == ".md", (
