@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { ChatMessage, TaskSettings } from '@/types'
+import type { ChatMessage, TaskSettings, SlidePreview } from '@/types'
 import { startGeneration, createWebSocket, getTemplates } from '@/api/presentation'
 import { ElMessage } from 'element-plus'
 
@@ -12,6 +12,9 @@ export const useChatStore = defineStore('chat', () => {
   const downloadUrl = ref<string | null>(null)
   const templates = ref<string[]>([])
   const ws = ref<WebSocket | null>(null)
+  const slidePreviews = ref<SlidePreview[]>([])
+  // 用于传递 isGenerating 状态给组件
+  const isGeneratingRef = isGenerating
 
   // Actions
   async function loadTemplates() {
@@ -139,6 +142,49 @@ export const useChatStore = defineStore('chat', () => {
         }
         break
 
+      case 'slide_preview':
+        // 处理幻灯片预览消息
+        if (data.html_content) {
+          // Design模式 - 更新或添加HTML预览
+          const slideNumber = data.slide_number || 1
+          const existingIndex = slidePreviews.value.findIndex(p => p.number === slideNumber)
+          
+          if (existingIndex >= 0) {
+            // 更新已存在的预览
+            slidePreviews.value[existingIndex] = {
+              number: slideNumber,
+              content: data.html_content,
+              type: 'html',
+              mode: 'design',
+            }
+          } else {
+            // 添加新预览
+            slidePreviews.value.push({
+              number: slideNumber,
+              content: data.html_content,
+              type: 'html',
+              mode: 'design',
+            })
+          }
+        } else if (data.images && data.images.length > 0) {
+          // PPTAgent模式 - 更新或添加图片预览
+          // 先清空旧的pptagent预览
+          slidePreviews.value = slidePreviews.value.filter(p => p.mode !== 'pptagent')
+          
+          data.images.forEach((img: string, idx: number) => {
+            slidePreviews.value.push({
+              number: idx + 1,
+              content: img,
+              type: 'image',
+              mode: 'pptagent',
+            })
+          })
+          
+          // 按页码排序
+          slidePreviews.value.sort((a, b) => a.number - b.number)
+        }
+        break
+
       case 'completed':
         // 处理完成状态
         if (data.file) {
@@ -198,6 +244,7 @@ export const useChatStore = defineStore('chat', () => {
     taskId.value = null
     downloadUrl.value = null
     isGenerating.value = false
+    slidePreviews.value = []
     
     if (ws.value) {
       ws.value.close()
@@ -208,9 +255,11 @@ export const useChatStore = defineStore('chat', () => {
   return {
     messages,
     isGenerating,
+    isGeneratingRef,
     taskId,
     downloadUrl,
     templates,
+    slidePreviews,
     loadTemplates,
     sendMessage,
     clearChat,

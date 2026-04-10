@@ -337,6 +337,10 @@ async def run_generation_task(task_id: str):
                 # 更新进度
                 if yield_msg.role == Role.SYSTEM:
                     task_info["progress"] = yield_msg.content
+            
+            elif isinstance(yield_msg, dict) and yield_msg.get("type") == "slide_preview":
+                # 处理幻灯片预览消息
+                task_info["websocket_queue"].append(yield_msg)
     
     except Exception as e:
         logger.error(f"Task {task_id} failed: {e}")
