@@ -35,13 +35,27 @@ export interface TokenStats {
 
 // WebSocket消息类型
 export interface WSMessage {
-  type: 'message' | 'file_ready' | 'token_stats' | 'completed' | 'error'
+  type: 'message' | 'file_ready' | 'token_stats' | 'completed' | 'error' | 'slide_preview'
   role?: string
   content?: string
   tool_calls?: ToolCall[]
   file?: string
   data?: TokenStats
   message?: string
+  // 幻灯片预览相关字段
+  slide_number?: number
+  slide_count?: number
+  html_content?: string
+  images?: string[]
+  mode?: 'design' | 'pptagent'
+}
+
+// 幻灯片预览数据
+export interface SlidePreview {
+  number: number
+  content: string
+  type: 'html' | 'image'
+  mode: 'design' | 'pptagent'
 }
 
 // API响应类型

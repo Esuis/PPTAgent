@@ -6,14 +6,25 @@
       <p class="center-subtitle">AI驱动的PPT智能生成平台</p>
     </div>
 
-    <!-- 中间聊天区域 -->
-    <div class="chat-area">
-      <ChatMessages />
-    </div>
+    <!-- 中间主要内容区域 -->
+    <div class="main-content">
+      <!-- 左侧区域：聊天 + 输入 -->
+      <div class="left-panel">
+        <!-- 聊天区域 -->
+        <div class="chat-area">
+          <ChatMessages />
+        </div>
+        
+        <!-- 输入和设置区域 -->
+        <div class="input-area">
+          <ChatInput />
+        </div>
+      </div>
 
-    <!-- 底部输入和设置区域 -->
-    <div class="input-area">
-      <ChatInput />
+      <!-- 右侧预览区域（常驻） -->
+      <div class="preview-area">
+        <SlidePreview :previews="slidePreviews" :is-generating="isGenerating" />
+      </div>
     </div>
   </div>
 </template>
@@ -23,8 +34,11 @@ import { onMounted } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import ChatMessages from '@/components/ChatMessages.vue'
 import ChatInput from '@/components/ChatInput.vue'
+import SlidePreview from '@/components/SlidePreview.vue'
 
 const chatStore = useChatStore()
+const slidePreviews = chatStore.slidePreviews
+const isGenerating = chatStore.isGenerating
 
 onMounted(() => {
   // 加载模板列表
@@ -61,22 +75,66 @@ onMounted(() => {
   opacity: 0.8;
 }
 
+.main-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 20px;
+}
+
+.left-panel {
+  flex: 0 0 50%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
 .chat-area {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-area {
+  flex: 0 0 50%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .input-area {
   flex-shrink: 0;
 }
 
+@media (max-width: 1200px) {
+  .main-content {
+    flex-direction: column;
+  }
+
+  .chat-area,
+  .preview-area {
+    flex: 0 0 100%;
+  }
+
+  .preview-area {
+    min-height: 400px;
+    max-height: 500px;
+  }
+}
+
 @media (max-width: 768px) {
   .home-container {
     padding: 10px;
   }
-  
+
   .center-title {
     font-size: 24px;
+  }
+
+  .main-content {
+    gap: 10px;
   }
 }
 </style>
