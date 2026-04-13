@@ -24,39 +24,6 @@ from deeppresenter.utils.constants import (
 from deeppresenter.utils.log import debug, info, logging_openai_exceptions
 
 
-# ApiKeyManager 单例（延迟导入避免循环依赖）
-_api_key_manager: "ApiKeyManager | None" = None
-_api_key_manager_config: "ApiKeyManagerConfig | None" = None
-
-
-def _set_api_key_manager_config(config: "ApiKeyManagerConfig | None"):
-    """设置 API Key 管理器配置（在加载 DeepPresenterConfig 时调用）"""
-    global _api_key_manager_config, _api_key_manager
-    _api_key_manager_config = config
-    # 如果已存在实例，需要重新初始化
-    if _api_key_manager is not None and config is not None:
-        from pptagent.api_key_manager import ApiKeyManager
-
-        _api_key_manager = ApiKeyManager.from_config(config)
-
-
-def _get_api_key_manager() -> "ApiKeyManager | None":
-    """获取 API Key 管理器单例"""
-    global _api_key_manager, _api_key_manager_config
-    if _api_key_manager is None:
-        try:
-            from pptagent.api_key_manager import ApiKeyManager, get_api_key_manager
-
-            # 优先使用已存储的配置
-            if _api_key_manager_config is not None:
-                _api_key_manager = ApiKeyManager.from_config(_api_key_manager_config)
-            else:
-                _api_key_manager = get_api_key_manager()
-        except ImportError:
-            pass
-    return _api_key_manager
-
-
 def get_json_from_response(response: str) -> dict | list:
     """
     Extract JSON from a text response.
@@ -119,49 +86,12 @@ class Endpoint(BaseModel):
     )
     _client: AsyncOpenAI = PrivateAttr()
 
-    # 类变量：缓存当前使用的 API Key 和客户端
-    _cached_key: str | None = None
-    _cached_client: AsyncOpenAI | None = None
-
     def model_post_init(self, _) -> None:
-        self._init_client()
-
-    def _init_client(self):
-        """初始化或更新客户端"""
-        key_manager = _get_api_key_manager()
-        api_key = self.api_key
-
-        # 如果配置了 api_key 为空字符串或 None，且有 key_manager，则动态获取
-        if (api_key is None or api_key == "") and key_manager is not None:
-            api_key = key_manager.get_key()
-
-        # 检查是否需要重建客户端（key 变了）
-        should_recreate = (
-            Endpoint._cached_key != api_key
-            or Endpoint._cached_client is None
+        self._client = AsyncOpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            **self.client_kwargs,
         )
-
-        if should_recreate:
-            Endpoint._cached_key = api_key
-            Endpoint._cached_client = AsyncOpenAI(
-                api_key=api_key,
-                base_url=self.base_url,
-                **self.client_kwargs,
-            )
-
-        self._client = Endpoint._cached_client
-
-    def _ensure_fresh_key(self):
-        """确保使用最新的 API Key"""
-        key_manager = _get_api_key_manager()
-        if key_manager is None:
-            return
-
-        # 尝试获取最新 key（可能触发刷新）
-        latest_key = key_manager.get_key()
-        if latest_key and latest_key != Endpoint._cached_key:
-            debug(f"API Key changed, refreshing Endpoint client")
-            self._init_client()
 
     async def call(
         self,
@@ -171,9 +101,6 @@ class Endpoint(BaseModel):
         tools: list[dict[str, Any]] | None = None,
     ) -> ChatCompletion:
         """Execute a chat or tool call using the endpoint client"""
-        # 确保使用最新的 API Key
-        self._ensure_fresh_key()
-
         if tools is not None:
             response = await self._client.chat.completions.create(
                 model=self.model,
@@ -490,30 +417,6 @@ class QueueConfig(BaseModel):
     )
 
 
-class ApiKeyManagerConfig(BaseModel):
-    """API Key Manager Configuration"""
-
-    enabled: bool = Field(
-        default=True, description="Enable dynamic API Key refresh"
-    )
-    key_url: str = Field(
-        default="http://eaip-ellm-1.bocomm.com/ELLM.ELLM-OMSERVICE.V-1.0/createSceneApiKey.do",
-        description="URL to fetch API Key",
-    )
-    scene_code: str = Field(
-        default="P2024146",
-        description="Scene code for API Key request",
-    )
-    refresh_interval: int = Field(
-        default=1500,
-        description="Refresh interval in seconds",
-    )
-    refresh_buffer: int = Field(
-        default=300,
-        description="Refresh buffer in seconds (refresh before expiry)",
-    )
-
-
 class DeepPresenterConfig(BaseModel):
     """DeepPresenter Global Configuration"""
 
@@ -542,9 +445,6 @@ class DeepPresenterConfig(BaseModel):
     queue: QueueConfig = Field(
         default_factory=QueueConfig, description="Queue configuration"
     )
-    api_key_manager: ApiKeyManagerConfig = Field(
-        default_factory=ApiKeyManagerConfig, description="API Key manager configuration"
-    )
 
     # llms
     research_agent: LLM = Field(description="Research agent model configuration")
@@ -570,9 +470,6 @@ class DeepPresenterConfig(BaseModel):
             )
         else:
             debug(f"Context folding is disabled, context window: {self.context_window}")
-
-        # 初始化 API Key 管理器配置
-        _set_api_key_manager_config(self.api_key_manager)
 
         return super().model_post_init(context)
 
