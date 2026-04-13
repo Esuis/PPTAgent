@@ -2,6 +2,7 @@ import base64
 import re
 import threading
 from dataclasses import dataclass
+from typing import ClassVar
 
 from oaib import Auto
 from openai import AsyncOpenAI, OpenAI
@@ -12,6 +13,23 @@ from pptagent.utils import get_json_from_response, get_logger, tenacity_decorato
 
 logger = get_logger(__name__)
 MAX_CONTEXT_SIZE = 32768
+
+
+# ApiKeyManager 单例（延迟导入避免循环依赖）
+_api_key_manager: "ApiKeyManager | None" = None
+
+
+def _get_api_key_manager() -> "ApiKeyManager | None":
+    """获取 API Key 管理器单例"""
+    global _api_key_manager
+    if _api_key_manager is None:
+        try:
+            from pptagent.api_key_manager import get_api_key_manager
+
+            _api_key_manager = get_api_key_manager()
+        except ImportError:
+            pass
+    return _api_key_manager
 
 
 @dataclass
@@ -216,7 +234,13 @@ class AsyncLLM(LLM):
     use_batch: bool = False
     """
     Asynchronous wrapper class for language model interaction.
+    Supports dynamic API Key refresh via ApiKeyManager.
     """
+
+    # 类变量：缓存当前使用的 API Key
+    _cached_key: ClassVar[str | None] = None
+    _cached_client: ClassVar[AsyncOpenAI | None] = None
+    _cached_batch: ClassVar[Auto | None] = None
 
     def __post_init__(self):
         """
@@ -226,19 +250,56 @@ class AsyncLLM(LLM):
             model (str): The model name.
             base_url (str): The base URL for the API.
             api_key (str): API key for authentication. Defaults to environment variable.
+                          If None, will use ApiKeyManager to get key dynamically.
         """
-        self.client = AsyncOpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            timeout=self.timeout,
+        # 初始化客户端（后续会通过 _get_client 方法动态更新 key）
+        self._init_client()
+
+    def _init_client(self):
+        """初始化或更新客户端"""
+        key_manager = _get_api_key_manager()
+        api_key = self.api_key
+
+        # 如果配置了 api_key 为空字符串或 None，且有 key_manager，则动态获取
+        if (api_key is None or api_key == "") and key_manager is not None:
+            api_key = key_manager.get_key()
+
+        # 检查是否需要重建客户端（key 变了）
+        should_recreate = (
+            AsyncLLM._cached_key != api_key
+            or AsyncLLM._cached_client is None
         )
-        if self.use_batch:
-            self.batch = Auto(
+
+        if should_recreate:
+            AsyncLLM._cached_key = api_key
+            AsyncLLM._cached_client = AsyncOpenAI(
                 base_url=self.base_url,
-                api_key=self.api_key,
+                api_key=api_key,
                 timeout=self.timeout,
-                loglevel=0,
             )
+            if self.use_batch:
+                AsyncLLM._cached_batch = Auto(
+                    base_url=self.base_url,
+                    api_key=api_key,
+                    timeout=self.timeout,
+                    loglevel=0,
+                )
+
+        self.client = AsyncLLM._cached_client
+        if self.use_batch:
+            self.batch = AsyncLLM._cached_batch
+
+    def _ensure_fresh_key(self):
+        """确保使用最新的 API Key"""
+        key_manager = _get_api_key_manager()
+        if key_manager is None:
+            return
+
+        # 尝试获取最新 key（可能触发刷新）
+        latest_key = key_manager.get_key()
+        if latest_key and latest_key != AsyncLLM._cached_key:
+            logger.debug(f"API Key changed, refreshing client: {AsyncLLM._cached_key[:8] if AsyncLLM._cached_key else 'None'} -> {latest_key[:8]}...")
+            self._init_client()
 
     @tenacity_decorator
     async def __call__(
@@ -267,6 +328,9 @@ class AsyncLLM(LLM):
         Returns:
             Union[str, Dict, List, Tuple]: The response from the model.
         """
+        # 确保使用最新的 API Key
+        self._ensure_fresh_key()
+
         if self.use_batch and threading.current_thread() is threading.main_thread():
             self.batch = Auto(
                 base_url=self.base_url,
@@ -326,17 +390,8 @@ class AsyncLLM(LLM):
 
     def __setstate__(self, state: dict):
         self.__dict__.update(state)
-        self.client = AsyncOpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            timeout=self.timeout,
-        )
-        self.batch = Auto(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            timeout=self.timeout,
-            loglevel=0,
-        )
+        # 使用 _init_client 来支持动态 API Key
+        self._init_client()
 
     async def test_connection(self) -> bool:
         """
