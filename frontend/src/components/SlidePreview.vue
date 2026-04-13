@@ -24,7 +24,7 @@
         <el-icon :size="48" color="#409eff" class="loading-icon">
           <Loading />
         </el-icon>
-        <p class="generating-text">正在生成中</p>
+        <p class="generating-text">等待生成中</p>
       </div>
 
       <div v-else-if="currentPreview" class="preview-content">

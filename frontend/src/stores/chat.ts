@@ -88,6 +88,7 @@ export const useChatStore = defineStore('chat', () => {
     isGenerating.value = true
     downloadUrl.value = null
     queuePosition.value = null
+    slidePreviews.value = []
 
     // 添加用户消息
     const userContent = instruction || '请根据上传的附件制作PPT'
