@@ -43,7 +43,7 @@
       <div class="input-row">
         <el-input
           v-model="inputText"
-          placeholder="输入你的指令，例如：制作一个关于AI发展的PPT..."
+          placeholder="输入你的指令，例如：基于现有知识介绍交通银行，5页，禁止联网"
           :disabled="chatStore.isGenerating"
           @keyup.enter="handleSend"
           class="message-input"

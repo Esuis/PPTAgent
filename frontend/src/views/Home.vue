@@ -31,14 +31,14 @@
 
 <script setup lang="ts">
 import { onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 import ChatMessages from '@/components/ChatMessages.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import SlidePreview from '@/components/SlidePreview.vue'
 
 const chatStore = useChatStore()
-const slidePreviews = chatStore.slidePreviews
-const isGenerating = chatStore.isGenerating
+const { slidePreviews, isGenerating } = storeToRefs(chatStore)
 
 onMounted(() => {
   // 加载模板列表
