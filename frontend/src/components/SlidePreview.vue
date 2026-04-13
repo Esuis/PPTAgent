@@ -231,17 +231,19 @@ function goToSlide(index: number) {
   padding: 12px;
   border-bottom: 1px solid #e8e8e8;
   display: flex;
+  flex-direction: row;
   gap: 8px;
   overflow-x: auto;
   background: #fafafa;
-  /* 确保滚动条样式 */
-  &::-webkit-scrollbar {
-    height: 6px;
-  }
-  &::-webkit-scrollbar-thumb {
-    background: #ccc;
-    border-radius: 3px;
-  }
+}
+
+.thumbnail-nav::-webkit-scrollbar {
+  height: 6px;
+}
+
+.thumbnail-nav::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 3px;
 }
 
 .thumbnail-item {
