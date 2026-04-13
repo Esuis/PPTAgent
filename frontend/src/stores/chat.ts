@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ChatMessage, TaskSettings, SlidePreview } from '@/types'
-import { startGeneration, createWebSocket, getTemplates } from '@/api/presentation'
+import { startGeneration, createWebSocket, createQueueWebSocket, getTemplates, cancelQueue as cancelQueueApi } from '@/api/presentation'
 import { ElMessage } from 'element-plus'
+
+const USER_ID_KEY = 'pptagent_user_id'
 
 export const useChatStore = defineStore('chat', () => {
   // State
@@ -15,6 +17,47 @@ export const useChatStore = defineStore('chat', () => {
   const slidePreviews = ref<SlidePreview[]>([])
   // 用于传递 isGenerating 状态给组件
   const isGeneratingRef = isGenerating
+
+  // 排队相关状态
+  const userId = ref<string | null>(null)
+  const isInQueue = ref(false)
+  const queuePosition = ref<number | null>(null)
+  const queueWs = ref<WebSocket | null>(null)
+
+  // 获取用户标识
+  function getUserId(): string {
+    // 1. URL参数 ?guwpToken=xxx
+    const urlParams = new URLSearchParams(window.location.search)
+    const urlToken = urlParams.get('guwpToken')
+    if (urlToken) {
+      return urlToken
+    }
+
+    // 2. Cookie中的 JSESSIONID
+    const cookies = document.cookie.split(';')
+    for (const cookie of cookies) {
+      const [name, value] = cookie.trim().split('=')
+      if (name === 'JSESSIONID') {
+        return value
+      }
+    }
+
+    // 3. localStorage中的 pptagent_user_id
+    const storedId = localStorage.getItem(USER_ID_KEY)
+    if (storedId) {
+      return storedId
+    }
+
+    // 4. 生成UUID并存入localStorage
+    const newId = crypto.randomUUID()
+    localStorage.setItem(USER_ID_KEY, newId)
+    return newId
+  }
+
+  // 初始化用户标识
+  function initUserId() {
+    userId.value = getUserId()
+  }
 
   // Actions
   async function loadTemplates() {
@@ -37,8 +80,14 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
 
+    // 确保用户ID已初始化
+    if (!userId.value) {
+      initUserId()
+    }
+
     isGenerating.value = true
     downloadUrl.value = null
+    queuePosition.value = null
 
     // 添加用户消息
     const userContent = instruction || '请根据上传的附件制作PPT'
@@ -65,21 +114,147 @@ export const useChatStore = defineStore('chat', () => {
         formData.append('files', file)
       })
 
-      // 启动生成任务
-      const response = await startGeneration(formData)
-      taskId.value = response.task_id
+      // 启动生成任务，传递userId
+      const response = await startGeneration(formData, userId.value || undefined)
 
-      // 建立WebSocket连接
-      connectWebSocket(response.task_id)
+      if (response.status === 'queued') {
+        // 进入排队状态
+        isInQueue.value = true
+        queuePosition.value = response.queue_position
+        taskId.value = null
+
+        // 更新占位消息
+        const lastMessage = messages.value[messages.value.length - 1]
+        if (lastMessage && lastMessage.content === '') {
+          lastMessage.content = `⏳ 正在排队等待，当前位置：第${response.queue_position}位`
+        }
+
+        // 建立队列WebSocket连接
+        connectQueueWebSocket(userId.value!)
+      } else if (response.status === 'running') {
+        // 直接开始执行
+        isInQueue.value = false
+        queuePosition.value = null
+        taskId.value = response.task_id
+
+        // 建立WebSocket连接
+        connectWebSocket(response.task_id)
+      } else if (response.status === 'rejected') {
+        // 被拒绝
+        isGenerating.value = false
+        isInQueue.value = false
+        ElMessage.warning(response.message)
+
+        // 更新最后一条消息
+        const lastMessage = messages.value[messages.value.length - 1]
+        if (lastMessage && lastMessage.content === '') {
+          lastMessage.content = `❌ ${response.message}`
+        }
+      }
     } catch (error: any) {
       console.error('Failed to start generation:', error)
       ElMessage.error(error.response?.data?.message || '启动生成任务失败')
       isGenerating.value = false
-      
+      isInQueue.value = false
+
       // 更新最后一条消息
       if (messages.value.length > 0) {
         messages.value[messages.value.length - 1].content = '❌ 启动任务失败'
       }
+    }
+  }
+
+  function connectQueueWebSocket(uid: string) {
+    // 关闭旧连接
+    if (queueWs.value) {
+      queueWs.value.close()
+    }
+
+    const websocket = createQueueWebSocket(uid)
+    queueWs.value = websocket
+
+    websocket.onopen = () => {
+      console.log('Queue WebSocket connected')
+    }
+
+    websocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        handleQueueWebSocketMessage(data)
+      } catch (error) {
+        console.error('Failed to parse queue WebSocket message:', error)
+      }
+    }
+
+    websocket.onerror = (error) => {
+      console.error('Queue WebSocket error:', error)
+    }
+
+    websocket.onclose = (event) => {
+      console.log('Queue WebSocket closed:', event.code, event.reason)
+      // 如果是因为轮到用户而关闭，不提示
+      if (isInQueue.value && event.code !== 1000 && event.code !== 1001) {
+        ElMessage.warning('排队连接已断开')
+      }
+    }
+  }
+
+  function handleQueueWebSocketMessage(data: any) {
+    console.log('📨 Queue WebSocket message received:', data)
+
+    switch (data.type) {
+      case 'queue_update':
+        // 更新排队位置
+        queuePosition.value = data.position
+        // 更新消息内容
+        const lastMessage = messages.value[messages.value.length - 1]
+        if (lastMessage && lastMessage.content.includes('正在排队等待')) {
+          lastMessage.content = `⏳ 正在排队等待，当前位置：第${data.position}位`
+        }
+        break
+
+      case 'queue_started':
+        // 轮到用户，开始执行
+        isInQueue.value = false
+        queuePosition.value = null
+        taskId.value = data.task_id
+
+        // 关闭队列WebSocket
+        if (queueWs.value) {
+          queueWs.value.close()
+          queueWs.value = null
+        }
+
+        // 更新消息
+        const msg = messages.value[messages.value.length - 1]
+        if (msg && msg.content.includes('正在排队等待')) {
+          msg.content = '🎉 轮到您了，正在启动生成任务...'
+        }
+
+        // 建立任务WebSocket连接
+        connectWebSocket(data.task_id)
+        break
+
+      case 'queue_cancelled':
+        // 排队被取消
+        isInQueue.value = false
+        queuePosition.value = null
+        isGenerating.value = false
+
+        // 关闭队列WebSocket
+        if (queueWs.value) {
+          queueWs.value.close()
+          queueWs.value = null
+        }
+
+        ElMessage.info(data.reason || '排队已取消')
+
+        // 更新消息
+        const lastMsg = messages.value[messages.value.length - 1]
+        if (lastMsg && lastMsg.content.includes('正在排队等待')) {
+          lastMsg.content = '❌ 排队已取消'
+        }
+        break
     }
   }
 
@@ -266,10 +441,44 @@ export const useChatStore = defineStore('chat', () => {
     downloadUrl.value = null
     isGenerating.value = false
     slidePreviews.value = []
-    
+    isInQueue.value = false
+    queuePosition.value = null
+
     if (ws.value) {
       ws.value.close()
       ws.value = null
+    }
+
+    if (queueWs.value) {
+      queueWs.value.close()
+      queueWs.value = null
+    }
+  }
+
+  async function cancelQueue() {
+    if (!userId.value) {
+      return
+    }
+
+    try {
+      await cancelQueueApi(userId.value)
+      isInQueue.value = false
+      queuePosition.value = null
+      isGenerating.value = false
+
+      if (queueWs.value) {
+        queueWs.value.close()
+        queueWs.value = null
+      }
+
+      // 更新消息
+      const lastMsg = messages.value[messages.value.length - 1]
+      if (lastMsg && lastMsg.content.includes('正在排队等待')) {
+        lastMsg.content = '❌ 排队已取消'
+      }
+    } catch (error) {
+      console.error('Failed to cancel queue:', error)
+      ElMessage.error('取消排队失败')
     }
   }
 
@@ -281,8 +490,13 @@ export const useChatStore = defineStore('chat', () => {
     downloadUrl,
     templates,
     slidePreviews,
+    userId,
+    isInQueue,
+    queuePosition,
     loadTemplates,
     sendMessage,
     clearChat,
+    cancelQueue,
+    initUserId,
   }
 })

@@ -409,6 +409,14 @@ class LLM(BaseModel):
             )
 
 
+class QueueConfig(BaseModel):
+    """Queue Configuration"""
+
+    max_concurrent_tasks: int = Field(
+        default=2, description="Maximum concurrent tasks for queue"
+    )
+
+
 class DeepPresenterConfig(BaseModel):
     """DeepPresenter Global Configuration"""
 
@@ -433,6 +441,9 @@ class DeepPresenterConfig(BaseModel):
     heavy_reflect: bool = Field(
         default=False,
         description="Enable heavy reflection, use rendered slide image for reflective design",
+    )
+    queue: QueueConfig = Field(
+        default_factory=QueueConfig, description="Queue configuration"
     )
 
     # llms

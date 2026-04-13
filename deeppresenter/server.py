@@ -2,11 +2,12 @@
 
 import asyncio
 import uuid
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -47,12 +48,18 @@ except Exception as e:
 # 任务管理
 active_tasks: dict[str, dict[str, Any]] = {}
 
+# 排队管理
+active_users: dict[str, dict[str, Any]] = {}  # 正在生成的用户 {userId: task_info}
+waiting_queue: deque[tuple[str, dict[str, Any]]] = deque()  # 排队队列 [(userId, request_data), ...]
+user_websockets: dict[str, WebSocket] = {}  # 用户WebSocket连接 {userId: ws}
+
 
 # Pydantic模型
 class GenerateResponse(BaseModel):
-    task_id: str
-    status: str
+    task_id: str | None
+    status: str  # running, queued, rejected
     message: str
+    queue_position: int | None = None
 
 
 class TaskStatus(BaseModel):
@@ -106,33 +113,57 @@ async def generate_presentation(
     convert_type: str = Form("freeform"),
     template: str = Form("auto"),
     files: list[UploadFile] = File([]),
+    x_user_id: str | None = Header(None, alias="X-User-Id"),
 ):
     """启动PPT生成任务"""
     if config is None:
         return GenerateResponse(
-            task_id="",
+            task_id=None,
             status="failed",
             message="Configuration not loaded",
         )
-    
+
+    # 获取用户标识
+    user_id = x_user_id or "anonymous"
+
+    # 检查用户是否已有任务在执行中
+    if user_id in active_users:
+        return GenerateResponse(
+            task_id=None,
+            status="rejected",
+            message="您已有任务正在执行中，请等待完成后再提交",
+        )
+
+    # 检查用户是否已在排队中
+    for idx, (uid, _) in enumerate(waiting_queue):
+        if uid == user_id:
+            return GenerateResponse(
+                task_id=None,
+                status="rejected",
+                message="您已在排队中，请勿重复提交",
+            )
+
+    # 获取最大并发数
+    max_concurrent = config.queue.max_concurrent_tasks if config else 2
+
     # 生成任务ID（不使用斜杠，避免WebSocket路由问题）
     task_id = uuid.uuid4().hex[:16]
-    
+
     # 保存上传的文件
     attachments = []
     if files:
         upload_dir = WORKSPACE_BASE / "uploads" / task_id.replace("/", "_")
         upload_dir.mkdir(parents=True, exist_ok=True)
-        
+
         for file in files:
             file_path = upload_dir / file.filename
             with open(file_path, "wb") as f:
                 content = await file.read()
                 f.write(content)
             attachments.append(str(file_path))
-    
+
     # 创建任务信息
-    active_tasks[task_id] = {
+    task_data = {
         "status": "pending",
         "progress": None,
         "result_file": None,
@@ -144,16 +175,32 @@ async def generate_presentation(
         "attachments": attachments,
         "messages": [],
         "token_stats": None,
+        "user_id": user_id,
     }
-    
-    # 在后台启动任务
-    asyncio.create_task(run_generation_task(task_id))
-    
-    return GenerateResponse(
-        task_id=task_id,
-        status="pending",
-        message="Task started",
-    )
+    active_tasks[task_id] = task_data
+
+    # 检查是否可以立即执行
+    if len(active_users) < max_concurrent:
+        # 直接执行
+        active_users[user_id] = {"task_id": task_id, **task_data}
+        task_data["status"] = "pending"
+        asyncio.create_task(run_generation_task(task_id, user_id))
+        return GenerateResponse(
+            task_id=task_id,
+            status="running",
+            message="Task started",
+            queue_position=None,
+        )
+    else:
+        # 进入排队队列
+        waiting_queue.append((user_id, {"task_id": task_id, **task_data}))
+        queue_position = len(waiting_queue)
+        return GenerateResponse(
+            task_id=None,
+            status="queued",
+            message=f"排队中，当前位置：第{queue_position}位",
+            queue_position=queue_position,
+        )
 
 
 @app.get("/api/download/{task_id}")
@@ -161,18 +208,61 @@ async def download_file(task_id: str):
     """下载生成的文件"""
     if task_id not in active_tasks:
         return {"error": "Task not found"}
-    
+
     task_info = active_tasks[task_id]
     result_file = task_info.get("result_file")
-    
+
     if not result_file or not Path(result_file).exists():
         return {"error": "File not found"}
-    
+
     return FileResponse(
         path=result_file,
         filename=Path(result_file).name,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
     )
+
+
+@app.post("/api/queue/cancel")
+async def cancel_queue(x_user_id: str | None = Header(None, alias="X-User-Id")):
+    """取消排队"""
+    if x_user_id is None:
+        return {"success": False, "message": "User ID is required"}
+
+    user_id = x_user_id
+
+    # 从等待队列中移除
+    for idx, (uid, task_data) in enumerate(waiting_queue):
+        if uid == user_id:
+            task_id = task_data.get("task_id")
+            # 从队列中移除
+            del waiting_queue[idx]
+            # 如果有对应的任务，也删除任务记录
+            if task_id and task_id in active_tasks:
+                del active_tasks[task_id]
+
+            # 更新其他用户的排队位置
+            for new_idx, (remaining_uid, _) in enumerate(waiting_queue):
+                if remaining_uid in user_websockets:
+                    try:
+                        asyncio.create_task(user_websockets[remaining_uid].send_json({
+                            "type": "queue_update",
+                            "position": new_idx + 1,
+                        }))
+                    except Exception as e:
+                        logger.error(f"Failed to send queue_update to {remaining_uid}: {e}")
+
+            # 通知用户取消成功
+            if user_id in user_websockets:
+                try:
+                    asyncio.create_task(user_websockets[user_id].send_json({
+                        "type": "queue_cancelled",
+                        "reason": "用户主动取消排队",
+                    }))
+                except Exception:
+                    pass
+            return {"success": True, "message": "排队已取消"}
+
+    return {"success": False, "message": "未找到排队记录"}
 
 
 @app.websocket("/api/ws/{task_id}")
@@ -249,41 +339,103 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
     except Exception as e:
         logger.error(f"WebSocket error for task {task_id}: {e}")
     finally:
+        # 用户断开连接时，从 active_users 移除并触发队列处理
+        user_id = task_info.get("user_id")
+        if user_id and user_id in active_users:
+            del active_users[user_id]
+            # 触发队列处理，启动下一个任务
+            asyncio.create_task(process_queue())
         await websocket.close()
 
 
-async def run_generation_task(task_id: str):
+@app.websocket("/api/ws/queue/{user_id}")
+async def queue_websocket_endpoint(websocket: WebSocket, user_id: str):
+    """队列状态WebSocket端点 - 接收排队位置更新"""
+    try:
+        await websocket.accept()
+    except Exception as e:
+        logger.error(f"Failed to accept queue websocket for {user_id}: {e}")
+        return
+
+    # 保存连接到 user_websockets
+    user_websockets[user_id] = websocket
+
+    try:
+        # 保持连接，等待消息
+        while True:
+            try:
+                # 接收消息（通常不需要，客户端主要接收服务器推送）
+                data = await websocket.receive_json()
+                logger.info(f"Received message from queue websocket {user_id}: {data}")
+            except Exception:
+                # 如果接收失败，可能是连接已关闭
+                break
+    except WebSocketDisconnect:
+        logger.info(f"Queue WebSocket disconnected for user {user_id}")
+    except Exception as e:
+        logger.error(f"Queue WebSocket error for user {user_id}: {e}")
+    finally:
+        # 清理：用户断开连接时，从队列中移除
+        if user_id in user_websockets:
+            del user_websockets[user_id]
+
+        # 如果用户在排队中，从队列中移除
+        user_removed = False
+        for idx, (uid, task_data) in enumerate(waiting_queue):
+            if uid == user_id:
+                task_id = task_data.get("task_id")
+                del waiting_queue[idx]
+                if task_id and task_id in active_tasks:
+                    del active_tasks[task_id]
+                logger.info(f"Removed user {user_id} from queue due to WebSocket disconnect")
+                user_removed = True
+                break
+
+        # 如果用户被移除，更新其他用户的排队位置
+        if user_removed:
+            for new_idx, (remaining_uid, _) in enumerate(waiting_queue):
+                if remaining_uid in user_websockets:
+                    try:
+                        asyncio.create_task(user_websockets[remaining_uid].send_json({
+                            "type": "queue_update",
+                            "position": new_idx + 1,
+                        }))
+                    except Exception as e:
+                        logger.error(f"Failed to send queue_update to {remaining_uid}: {e}")
+
+
+async def run_generation_task(task_id: str, user_id: str):
     """后台运行生成任务"""
     task_info = active_tasks[task_id]
     task_info["status"] = "running"
     task_info["websocket_queue"] = []
-    
+
     try:
         # 创建InputRequest
         convert_type_enum = ConvertType.DEEPPRESENTER
         if task_info["convert_type"] == "template" or "模版" in task_info["convert_type"]:
             convert_type_enum = ConvertType.PPTAGENT
-        
+
         selected_num_pages = (
             None if task_info["num_pages"] == "auto" else task_info["num_pages"]
         )
         template_value = (
             None if task_info["template"] == "auto" else task_info["template"]
         )
-        
+
         request = InputRequest(
             instruction=task_info["instruction"],
             attachments=task_info["attachments"],
             num_pages=str(selected_num_pages) if selected_num_pages else "auto",
             convert_type=convert_type_enum,
         )
-        
+
         # 创建AgentLoop
         loop = AgentLoop(
             config=config,
             session_id=task_id,
         )
-        
+
         # 运行生成
         async for yield_msg in loop.run(request):
             if isinstance(yield_msg, (str, Path)):
@@ -292,11 +444,11 @@ async def run_generation_task(task_id: str):
                 task_info["result_file"] = result_file
                 task_info["status"] = "completed"
                 task_info["progress"] = "生成完成"
-                
+
                 # 收集token统计
                 token_stats = collect_token_stats(loop)
                 task_info["token_stats"] = token_stats
-                
+
                 # 发送到WebSocket队列
                 task_info["websocket_queue"].append({
                     "type": "file_ready",
@@ -310,18 +462,18 @@ async def run_generation_task(task_id: str):
                     "type": "completed",
                     "file": result_file,
                 })
-                
+
             elif isinstance(yield_msg, ChatMessage):
                 # 处理聊天消息
                 # 提取文本内容（ChatMessage.content 可能是数组格式）
                 content_text = yield_msg.text if hasattr(yield_msg, 'text') else (yield_msg.content or "")
-                
+
                 msg_data = {
                     "type": "message",
                     "role": str(yield_msg.role),
                     "content": content_text,
                 }
-                
+
                 if yield_msg.tool_calls:
                     msg_data["tool_calls"] = [
                         {
@@ -330,18 +482,18 @@ async def run_generation_task(task_id: str):
                         }
                         for tc in yield_msg.tool_calls
                     ]
-                
+
                 task_info["messages"].append(msg_data)
                 task_info["websocket_queue"].append(msg_data)
-                
+
                 # 更新进度
                 if yield_msg.role == Role.SYSTEM:
                     task_info["progress"] = yield_msg.content
-            
+
             elif isinstance(yield_msg, dict) and yield_msg.get("type") == "slide_preview":
                 # 处理幻灯片预览消息
                 task_info["websocket_queue"].append(yield_msg)
-    
+
     except Exception as e:
         logger.error(f"Task {task_id} failed: {e}")
         task_info["status"] = "failed"
@@ -350,6 +502,53 @@ async def run_generation_task(task_id: str):
             "type": "error",
             "message": str(e),
         })
+    finally:
+        # 任务完成后，从 active_users 中移除，并触发队列处理
+        if user_id in active_users:
+            del active_users[user_id]
+        # 触发队列处理，启动下一个任务
+        asyncio.create_task(process_queue())
+
+
+async def process_queue():
+    """处理排队队列"""
+    if not waiting_queue:
+        return
+
+    max_concurrent = config.queue.max_concurrent_tasks if config else 2
+
+    while waiting_queue and len(active_users) < max_concurrent:
+        user_id, task_data = waiting_queue.popleft()
+        task_id = task_data["task_id"]
+
+        # 将任务信息更新到 active_tasks 中
+        if task_id in active_tasks:
+            active_tasks[task_id]["status"] = "pending"
+        active_users[user_id] = task_data
+
+        # 通知用户开始执行
+        if user_id in user_websockets:
+            try:
+                await user_websockets[user_id].send_json({
+                    "type": "queue_started",
+                    "task_id": task_id,
+                })
+            except Exception as e:
+                logger.error(f"Failed to send queue_started to {user_id}: {e}")
+
+        # 启动任务
+        asyncio.create_task(run_generation_task(task_id, user_id))
+
+        # 更新队列中其他用户的等待位置
+        for idx, (uid, _) in enumerate(waiting_queue):
+            if uid in user_websockets:
+                try:
+                    await user_websockets[uid].send_json({
+                        "type": "queue_update",
+                        "position": idx + 1,
+                    })
+                except Exception as e:
+                    logger.error(f"Failed to send queue_update to {uid}: {e}")
 
 
 def collect_token_stats(loop: AgentLoop) -> dict:

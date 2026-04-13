@@ -37,10 +37,11 @@ export async function getTemplates(): Promise<TemplateListResponse> {
 /**
  * 启动PPT生成任务
  */
-export async function startGeneration(data: FormData): Promise<GenerateResponse> {
+export async function startGeneration(data: FormData, userId?: string): Promise<GenerateResponse> {
   return api.post('/generate', data, {
     headers: {
       'Content-Type': 'multipart/form-data',
+      'X-User-Id': userId || '',
     },
     timeout: 60000, // 生成任务可能需要更长时间
   })
@@ -67,6 +68,26 @@ export function createWebSocket(taskId: string): WebSocket {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const wsUrl = `${protocol}//${window.location.host}/api/ws/${taskId}`
   return new WebSocket(wsUrl)
+}
+
+/**
+ * 创建队列WebSocket连接
+ */
+export function createQueueWebSocket(userId: string): WebSocket {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsUrl = `${protocol}//${window.location.host}/api/ws/queue/${userId}`
+  return new WebSocket(wsUrl)
+}
+
+/**
+ * 取消排队
+ */
+export async function cancelQueue(userId: string): Promise<{ success: boolean; message: string }> {
+  return api.post('/queue/cancel', null, {
+    headers: {
+      'X-User-Id': userId,
+    },
+  })
 }
 
 export default api

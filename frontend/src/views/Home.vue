@@ -14,7 +14,7 @@
         <div class="chat-area">
           <ChatMessages />
         </div>
-        
+
         <!-- 输入和设置区域 -->
         <div class="input-area">
           <ChatInput />
@@ -26,6 +26,9 @@
         <SlidePreview :previews="slidePreviews" :is-generating="isGenerating" />
       </div>
     </div>
+
+    <!-- 排队弹窗 -->
+    <QueueDialog />
   </div>
 </template>
 
@@ -35,12 +38,15 @@ import { useChatStore } from '@/stores/chat'
 import ChatMessages from '@/components/ChatMessages.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import SlidePreview from '@/components/SlidePreview.vue'
+import QueueDialog from '@/components/QueueDialog.vue'
 
 const chatStore = useChatStore()
 const slidePreviews = chatStore.slidePreviews
 const isGenerating = chatStore.isGenerating
 
 onMounted(() => {
+  // 初始化用户ID
+  chatStore.initUserId()
   // 加载模板列表
   chatStore.loadTemplates()
 })
