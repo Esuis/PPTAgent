@@ -409,6 +409,14 @@ def collect_token_stats(loop: AgentLoop) -> dict:
     }
 
 
+# 挂载workspace目录，用于访问HTML幻灯片中的本地图片
+# 注意：必须在挂载 "/" 之前，否则会被 "/" 的StaticFiles拦截
+app.mount(
+    "/workspace",
+    StaticFiles(directory=str(WORKSPACE_BASE), check_dir=False),
+    name="workspace",
+)
+
 # 生产环境：挂载静态文件
 # 如果frontend/dist存在，则提供静态文件服务
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"

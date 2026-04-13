@@ -18,6 +18,11 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      // 代理workspace目录，用于HTML幻灯片预览中的图片加载
+      '/workspace': {
+        target: 'http://backend:8000',
+        changeOrigin: true,
+      },
     },
   },
   build: {
