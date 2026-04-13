@@ -149,11 +149,32 @@ export const useChatStore = defineStore('chat', () => {
           const slideNumber = data.slide_number || 1
           const existingIndex = slidePreviews.value.findIndex(p => p.number === slideNumber)
           
+          // 转换HTML中的本地图片路径为HTTP可访问的路径
+          // 容器内workspace挂载在 /opt/workspace，后端通过 /workspace 静态文件服务映射
+          // 需要将 /opt/workspace/... 转换为 /workspace/...
+          let processedHtml = data.html_content
+          processedHtml = processedHtml.replace(
+            /src=["'](\/[^"']+)["']/g,
+            (match, path) => {
+              // /opt/workspace/{id}/... -> /workspace/{id}/...
+              if (path.startsWith('/opt/workspace/')) {
+                return `src="${path.replace('/opt/workspace/', '/workspace/')}"`
+              }
+              // /root/.cache/deeppresenter/{id}/... -> /workspace/{id}/... (非容器环境)
+              if (path.startsWith('/root/.cache/deeppresenter/')) {
+                return `src="${path.replace('/root/.cache/deeppresenter/', '/workspace/')}"`
+              }
+              // 已经是 /workspace/... 的路径无需转换
+              // 其他路径（data:URL、http://、https://、相对路径等）保持不变
+              return match
+            }
+          )
+          
           if (existingIndex >= 0) {
             // 更新已存在的预览
             slidePreviews.value[existingIndex] = {
               number: slideNumber,
-              content: data.html_content,
+              content: processedHtml,
               type: 'html',
               mode: 'design',
             }
@@ -161,7 +182,7 @@ export const useChatStore = defineStore('chat', () => {
             // 添加新预览
             slidePreviews.value.push({
               number: slideNumber,
-              content: data.html_content,
+              content: processedHtml,
               type: 'html',
               mode: 'design',
             })
