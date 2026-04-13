@@ -62,10 +62,26 @@ class PPTAgentServer(PPTAgent):
         self.slides = []
         self.layout: Layout | None = None
         self.editor_output: EditorOutput | None = None
+
+        use_dynamic_key = os.getenv("USE_DYNAMIC_API_KEY", "false").lower() == "true"
+        if use_dynamic_key:
+            # Initialize ApiKeyManager from environment variables
+            from deeppresenter.utils.api_key_manager import ApiKeyManager
+
+            key_manager = ApiKeyManager(
+                key_url=os.getenv("API_KEY_URL", ""),
+                scene_code=os.getenv("API_KEY_SCENE_CODE", ""),
+                refresh_interval=int(os.getenv("API_KEY_REFRESH_INTERVAL", "1500")),
+                refresh_buffer=int(os.getenv("API_KEY_REFRESH_BUFFER", "300")),
+            )
+            key_manager.start()
+            logger.info("[PPTAgentServer] ApiKeyManager initialized with dynamic key mode")
+
         model = AsyncLLM(
             os.getenv("PPTAGENT_MODEL"),
             os.getenv("PPTAGENT_API_BASE"),
             os.getenv("PPTAGENT_API_KEY"),
+            use_dynamic_api_key=use_dynamic_key,
         )
         workspace = os.getenv("WORKSPACE", None)
         if workspace is not None:
