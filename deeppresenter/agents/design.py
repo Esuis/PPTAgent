@@ -18,15 +18,14 @@ class Design(Agent):
             # 检查是否有新生成的slide HTML文件，推送预览
             slide_files = sorted((self.workspace / "slides").glob("slide_*.html"))
             if slide_files and len(slide_files) > last_slide_count:
-                # 有新幻灯片生成，推送所有幻灯片
-                last_slide_count = len(slide_files)
-                
-                for idx, slide_file in enumerate(slide_files, 1):
+                # 只推送新生成的幻灯片（从last_slide_count开始）
+                for idx in range(last_slide_count, len(slide_files)):
+                    slide_file = slide_files[idx]
                     try:
                         html_content = slide_file.read_text(encoding="utf-8")
                         yield {
                             "type": "slide_preview",
-                            "slide_number": idx,
+                            "slide_number": idx + 1,
                             "html_content": html_content,
                             "mode": "design",
                             "total_slides": len(slide_files),
@@ -34,6 +33,9 @@ class Design(Agent):
                     except Exception as e:
                         # 如果读取失败，不影响主流程
                         pass
+                
+                # 更新已推送的幻灯片数量
+                last_slide_count = len(slide_files)
             
             outcome = await self.execute(self.chat_history[-1].tool_calls)
             if isinstance(outcome, list):
