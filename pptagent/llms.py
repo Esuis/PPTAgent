@@ -24,11 +24,23 @@ class LLM:
     base_url: str | None = None
     api_key: str | None = None
     timeout: int = 360
+    use_dynamic_api_key: bool = False
 
     def __post_init__(self):
-        self.client = OpenAI(
-            base_url=self.base_url, api_key=self.api_key, timeout=self.timeout
-        )
+        if self.use_dynamic_api_key:
+            from deeppresenter.utils.api_key_manager import create_openai_client
+
+            self.client = create_openai_client(
+                base_url=self.base_url,
+                use_dynamic_key=True,
+                api_key=self.api_key,
+                timeout=self.timeout,
+                is_async=False,
+            )
+        else:
+            self.client = OpenAI(
+                base_url=self.base_url, api_key=self.api_key, timeout=self.timeout
+            )
 
     @tenacity_decorator
     def __call__(
@@ -208,6 +220,7 @@ class LLM:
             base_url=self.base_url,
             api_key=self.api_key,
             timeout=self.timeout,
+            use_dynamic_api_key=self.use_dynamic_api_key,
         )
 
 
@@ -227,11 +240,22 @@ class AsyncLLM(LLM):
             base_url (str): The base URL for the API.
             api_key (str): API key for authentication. Defaults to environment variable.
         """
-        self.client = AsyncOpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            timeout=self.timeout,
-        )
+        if self.use_dynamic_api_key:
+            from deeppresenter.utils.api_key_manager import create_openai_client
+
+            self.client = create_openai_client(
+                base_url=self.base_url,
+                use_dynamic_key=True,
+                api_key=self.api_key,
+                timeout=self.timeout,
+                is_async=True,
+            )
+        else:
+            self.client = AsyncOpenAI(
+                base_url=self.base_url,
+                api_key=self.api_key,
+                timeout=self.timeout,
+            )
         if self.use_batch:
             self.batch = Auto(
                 base_url=self.base_url,
@@ -326,11 +350,22 @@ class AsyncLLM(LLM):
 
     def __setstate__(self, state: dict):
         self.__dict__.update(state)
-        self.client = AsyncOpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            timeout=self.timeout,
-        )
+        if self.use_dynamic_api_key:
+            from deeppresenter.utils.api_key_manager import create_openai_client
+
+            self.client = create_openai_client(
+                base_url=self.base_url,
+                use_dynamic_key=True,
+                api_key=self.api_key,
+                timeout=self.timeout,
+                is_async=True,
+            )
+        else:
+            self.client = AsyncOpenAI(
+                base_url=self.base_url,
+                api_key=self.api_key,
+                timeout=self.timeout,
+            )
         self.batch = Auto(
             base_url=self.base_url,
             api_key=self.api_key,
@@ -379,7 +414,12 @@ class AsyncLLM(LLM):
         """
         Convert the AsyncLLM to a synchronous LLM.
         """
-        return LLM(model=self.model, base_url=self.base_url, api_key=self.api_key)
+        return LLM(
+            model=self.model,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            use_dynamic_api_key=self.use_dynamic_api_key,
+        )
 
 
 def get_model_abbr(llms: LLM | list[LLM]) -> str:

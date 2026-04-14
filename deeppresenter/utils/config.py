@@ -24,6 +24,21 @@ from deeppresenter.utils.constants import (
 from deeppresenter.utils.log import debug, info, logging_openai_exceptions
 
 
+class ApiKeyManagerConfig(BaseModel):
+    """API Key Manager Configuration for dynamic key refresh"""
+
+    enabled: bool = Field(default=False, description="Enable dynamic API key refresh")
+    key_url: str = Field(description="URL to fetch dynamic API key")
+    scene_code: str = Field(description="Scene code for key request")
+    refresh_interval: int = Field(
+        default=1500, description="Refresh interval in seconds (default 1500 = 25min)"
+    )
+    refresh_buffer: int = Field(
+        default=300,
+        description="Refresh ahead time in seconds (default 300 = 5min)",
+    )
+
+
 def get_json_from_response(response: str) -> dict | list:
     """
     Extract JSON from a text response.
@@ -78,6 +93,10 @@ class Endpoint(BaseModel):
     base_url: str = Field(description="API base URL")
     model: str = Field(description="Model name")
     api_key: str = Field(description="API key")
+    use_dynamic_api_key: bool = Field(
+        default=False,
+        description="Whether to use dynamic API key from ApiKeyManager",
+    )
     client_kwargs: dict[str, Any] = Field(
         default_factory=dict, description="Client parameters"
     )
@@ -87,11 +106,21 @@ class Endpoint(BaseModel):
     _client: AsyncOpenAI = PrivateAttr()
 
     def model_post_init(self, _) -> None:
-        self._client = AsyncOpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            **self.client_kwargs,
-        )
+        if self.use_dynamic_api_key:
+            from deeppresenter.utils.api_key_manager import create_openai_client
+
+            self._client = create_openai_client(
+                base_url=self.base_url,
+                use_dynamic_key=True,
+                is_async=True,
+                **self.client_kwargs,
+            )
+        else:
+            self._client = AsyncOpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                **self.client_kwargs,
+            )
 
     async def call(
         self,
@@ -146,6 +175,10 @@ class LLM(BaseModel):
     base_url: str | None = Field(default=None, description="API base URL")
     model: str | None = Field(default=None, description="Model name")
     api_key: str | None = Field(default=None, description="API key")
+    use_dynamic_api_key: bool = Field(
+        default=False,
+        description="Whether to use dynamic API key from ApiKeyManager",
+    )
     identifier: str | None = Field(
         default=None,
         description="Optional identifier for the model instance, this will override property `model_name`",
@@ -216,13 +249,18 @@ class LLM(BaseModel):
                 Endpoint(
                     base_url=self.base_url,
                     model=self.model,
-                    api_key=self.api_key,
+                    api_key=self.api_key or "placeholder",
+                    use_dynamic_api_key=self.use_dynamic_api_key,
                     client_kwargs=self.client_kwargs,
                     sampling_parameters=self.sampling_parameters,
                 ),
             )
         for endpoint in self.endpoints:
-            self._endpoints.append(Endpoint(**endpoint))
+            ep_data = dict(endpoint)
+            # Inherit use_dynamic_api_key if not explicitly set in endpoint config
+            if "use_dynamic_api_key" not in ep_data and self.use_dynamic_api_key:
+                ep_data["use_dynamic_api_key"] = True
+            self._endpoints.append(Endpoint(**ep_data))
         assert len(self._endpoints) >= 1, "At least one endpoint must be configured"
 
         model_lower = self._endpoints[0].model.lower()
@@ -445,6 +483,9 @@ class DeepPresenterConfig(BaseModel):
     queue: QueueConfig = Field(
         default_factory=QueueConfig, description="Queue configuration"
     )
+    api_key_manager: ApiKeyManagerConfig | None = Field(
+        default=None, description="API Key manager configuration for dynamic key refresh"
+    )
 
     # llms
     research_agent: LLM = Field(description="Research agent model configuration")
@@ -470,6 +511,17 @@ class DeepPresenterConfig(BaseModel):
             )
         else:
             debug(f"Context folding is disabled, context window: {self.context_window}")
+
+        # Initialize ApiKeyManager if configured and enabled
+        if (
+            self.api_key_manager is not None
+            and self.api_key_manager.enabled
+        ):
+            from deeppresenter.utils.api_key_manager import ApiKeyManager
+
+            key_manager = ApiKeyManager.from_config(self.api_key_manager)
+            key_manager.start()
+            info("[DeepPresenterConfig] ApiKeyManager initialized and started")
 
         return super().model_post_init(context)
 
