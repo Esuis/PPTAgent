@@ -21,7 +21,6 @@ from deeppresenter.utils.constants import (
     PIXEL_MULTIPLE,
     RETRY_TIMES,
 )
-from deeppresenter.utils.api_key_manager import ApiKeyManager
 from deeppresenter.utils.log import debug, info, logging_openai_exceptions
 
 
@@ -73,23 +72,12 @@ def get_json_from_response(response: str) -> dict | list:
     return json_repair.loads(response)
 
 
-class ApiKeyManagerConfig(BaseModel):
-    """API Key管理器配置"""
-
-    enabled: bool = Field(default=False, description="是否启用动态API Key")
-    key_url: str = Field(description="获取API Key的服务URL")
-    scene_code: str = Field(description="场景代码")
-    refresh_interval: int = Field(default=1500, description="刷新间隔（秒）")
-    refresh_buffer: int = Field(default=300, description="提前刷新时间（秒）")
-
-
 class Endpoint(BaseModel):
     """LLM Endpoint Configuration"""
 
     base_url: str = Field(description="API base URL")
     model: str = Field(description="Model name")
     api_key: str = Field(description="API key")
-    use_dynamic_api_key: bool = Field(default=False, description="是否使用动态API Key")
     client_kwargs: dict[str, Any] = Field(
         default_factory=dict, description="Client parameters"
     )
@@ -97,25 +85,13 @@ class Endpoint(BaseModel):
         default_factory=dict, description="Sampling parameters"
     )
     _client: AsyncOpenAI = PrivateAttr()
-    _auth: httpx.Auth = PrivateAttr()
 
     def model_post_init(self, _) -> None:
-        # 如果启用动态API Key，使用DynamicApiKeyAuth
-        if self.use_dynamic_api_key and ApiKeyManager.get_instance().get_current_api_key():
-            from deeppresenter.utils.auth import DynamicApiKeyAuth
-            self._auth = DynamicApiKeyAuth(ApiKeyManager.get_instance())
-            self._client = AsyncOpenAI(
-                base_url=self.base_url,
-                auth=self._auth,
-                **self.client_kwargs,
-            )
-        else:
-            self._auth = None
-            self._client = AsyncOpenAI(
-                api_key=self.api_key,
-                base_url=self.base_url,
-                **self.client_kwargs,
-            )
+        self._client = AsyncOpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            **self.client_kwargs,
+        )
 
     async def call(
         self,
@@ -170,7 +146,6 @@ class LLM(BaseModel):
     base_url: str | None = Field(default=None, description="API base URL")
     model: str | None = Field(default=None, description="Model name")
     api_key: str | None = Field(default=None, description="API key")
-    use_dynamic_api_key: bool = Field(default=False, description="是否使用动态API Key")
     identifier: str | None = Field(
         default=None,
         description="Optional identifier for the model instance, this will override property `model_name`",
@@ -242,7 +217,6 @@ class LLM(BaseModel):
                     base_url=self.base_url,
                     model=self.model,
                     api_key=self.api_key,
-                    use_dynamic_api_key=self.use_dynamic_api_key,
                     client_kwargs=self.client_kwargs,
                     sampling_parameters=self.sampling_parameters,
                 ),
@@ -471,9 +445,6 @@ class DeepPresenterConfig(BaseModel):
     queue: QueueConfig = Field(
         default_factory=QueueConfig, description="Queue configuration"
     )
-    api_key_manager: ApiKeyManagerConfig = Field(
-        default_factory=ApiKeyManagerConfig, description="API Key manager configuration"
-    )
 
     # llms
     research_agent: LLM = Field(description="Research agent model configuration")
@@ -487,15 +458,6 @@ class DeepPresenterConfig(BaseModel):
     )
 
     def model_post_init(self, context):
-        # 初始化ApiKeyManager
-        if self.api_key_manager.enabled:
-            ApiKeyManager.create_instance(
-                key_url=self.api_key_manager.key_url,
-                scene_code=self.api_key_manager.scene_code,
-                refresh_interval=self.api_key_manager.refresh_interval,
-                refresh_buffer=self.api_key_manager.refresh_buffer,
-            )
-        
         if self.context_window is None:
             if self.context_folding:
                 self.context_window = CONTEXT_LENGTH_LIMIT // self.max_context_folds
