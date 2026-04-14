@@ -68,7 +68,7 @@ class AgentLoop:
             if self.config.offline_mode:
                 hello_message += " [Offline Mode]"
             debug(hello_message)
-            yield ChatMessage(role=Role.SYSTEM, content=hello_message)
+            yield ChatMessage(role=Role.SYSTEM, content="启动任务，正在准备...")
             self.research_agent = Research(
                 self.config,
                 agent_env,
@@ -77,6 +77,7 @@ class AgentLoop:
             )
             self.agent = self.research_agent
             try:
+                yield ChatMessage(role=Role.SYSTEM, content="正在研究主题...")
                 async for msg in self.research_agent.loop(request):
                     if isinstance(msg, str):
                         md_file = Path(msg)
@@ -96,6 +97,7 @@ class AgentLoop:
                 self.research_agent.save_history()
                 self.save_results()
             if request.convert_type == ConvertType.PPTAGENT:
+                yield ChatMessage(role=Role.SYSTEM, content="正在基于模板生成PPT...")
                 self.pptagent = PPTAgent(
                     self.config,
                     agent_env,
@@ -124,6 +126,7 @@ class AgentLoop:
                     self.pptagent.save_history()
                     self.save_results()
             else:
+                yield ChatMessage(role=Role.SYSTEM, content="正在设计幻灯片...")
                 self.designagent = Design(
                     self.config,
                     agent_env,
@@ -151,6 +154,7 @@ class AgentLoop:
                     self.save_results()
                 pptx_path = self.workspace / f"{md_file.stem}.pptx"
                 try:
+                    yield ChatMessage(role=Role.SYSTEM, content="正在转换为PPTX文件...")
                     # ? this feature is in experimental stage
                     await convert_html_to_pptx(
                         slide_html_dir,

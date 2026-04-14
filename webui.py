@@ -34,6 +34,57 @@ CONVERT_MAPPING = {
 }
 
 
+TOOL_SUMMARIES = {
+    "web_search": "搜索资料",
+    "search": "搜索资料",
+    "read_file": "读取文件",
+    "read": "读取文件",
+    "write_file": "写入文件",
+    "write": "写入文件",
+    "execute_command": "执行命令",
+    "finalize": "完成任务",
+    "create_slide": "生成幻灯片",
+    "edit_slide": "编辑幻灯片",
+    "generate_slide": "生成幻灯片",
+}
+
+
+def summarize_tool_call_gradio(name: str, args_str: str) -> str:
+    """将工具调用凝练为简洁描述"""
+    base = TOOL_SUMMARIES.get(name, f"调用 {name}")
+    if not args_str:
+        return base
+    try:
+        import json
+        args = json.loads(args_str) if isinstance(args_str, str) else args_str
+        if name in ("web_search", "search"):
+            query = args.get("query", args.get("keywords", args.get("q", "")))
+            return f"搜索: {query[:30]}" if query else base
+        if name in ("read_file", "read"):
+            path = args.get("path", args.get("file_path", args.get("filename", "")))
+            fname = path.split("/")[-1] if path else path
+            return f"读取: {fname[:30]}" if path else base
+        if name in ("write_file", "write"):
+            path = args.get("path", args.get("file_path", args.get("filename", "")))
+            fname = path.split("/")[-1] if path else path
+            return f"写入: {fname[:30]}" if path else base
+        if name == "execute_command":
+            cmd = args.get("command", args.get("cmd", ""))
+            return f"执行: {cmd[:40]}" if cmd else base
+        if name == "finalize":
+            outcome = args.get("outcome", "")
+            return f"完成: {outcome[:30]}" if outcome else base
+        if name in ("create_slide", "generate_slide"):
+            num = args.get("slide_number", args.get("number", args.get("page", "")))
+            return f"生成第 {num} 页幻灯片" if num else base
+        if name == "edit_slide":
+            num = args.get("slide_number", args.get("number", args.get("page", "")))
+            return f"编辑第 {num} 页幻灯片" if num else base
+    except Exception:
+        pass
+    return base
+
+
 gradio_css = """
             .center-title {
                 text-align: center;
@@ -290,7 +341,7 @@ class ChatDemo:
                     )
                 ):
                     if isinstance(yield_msg, (str, Path)):
-                        file_content = "📄 幻灯片生成完成，点击下方按钮下载文件"
+                        file_content = "📄 幻灯片生成完成，点击右侧按钮下载文件"
                         aggregated_parts.append(file_content)
                         aggregated_text = "\n\n".join(aggregated_parts).strip()
                         history[-1]["content"] = aggregated_text
@@ -306,31 +357,37 @@ class ChatDemo:
                         )
 
                     elif isinstance(yield_msg, ChatMessage):
-                        role_msg = f"{ROLE_EMOJI[yield_msg.role]} **{str(yield_msg.role).title()} Message**"
-                        if yield_msg.text:
-                            aggregated_parts.append(role_msg)
-
-                        if yield_msg.text is not None and yield_msg.text.strip():
-                            if yield_msg.role == Role.TOOL:
-                                aggregated_parts.append(
-                                    "```json\n"
-                                    + yield_msg.text.replace("\\n", "\n")
-                                    + "\n```"
-                                )
-                            else:
+                        # 凝练消息展示：替代原始冗长的模型输出和工具调用
+                        if yield_msg.role == Role.SYSTEM:
+                            # 系统消息直接使用文本
+                            if yield_msg.text and yield_msg.text.strip():
                                 aggregated_parts.append(yield_msg.text)
+                        elif yield_msg.role == Role.TOOL:
+                            # 工具执行结果简略显示
+                            if yield_msg.text and yield_msg.text.strip():
+                                text = yield_msg.text.replace("\\n", "\n")
+                                if len(text) < 100:
+                                    aggregated_parts.append(f"📋 {text}")
+                                else:
+                                    aggregated_parts.append("📋 工具执行完成")
+                        elif yield_msg.role == Role.ASSISTANT:
+                            # 助手消息：有 tool_calls 时显示凝练摘要，否则显示简短文本
+                            if yield_msg.tool_calls:
+                                for tool_call in yield_msg.tool_calls:
+                                    summary = summarize_tool_call_gradio(tool_call.function.name, tool_call.function.arguments)
+                                    aggregated_parts.append(summary)
+                            elif yield_msg.text and yield_msg.text.strip():
+                                text = yield_msg.text.strip()
+                                if len(text) < 150:
+                                    aggregated_parts.append(text)
+                                else:
+                                    lines = [l for l in text.split('\n') if l.strip()]
+                                    if len(lines) <= 3:
+                                        aggregated_parts.append(text)
+                                    else:
+                                        aggregated_parts.append('\n'.join(lines[:2]) + '\n...')
 
-                        if yield_msg.tool_calls:
-                            for tool_call in yield_msg.tool_calls:
-                                tool_msg = f"{ROLE_EMOJI.get(yield_msg.role, '💬')} **Tool Call: {tool_call.function.name}**"
-                                aggregated_parts.append(tool_msg)
-
-                                if hasattr(tool_call.function, "arguments"):
-                                    args_str = tool_call.function.arguments
-                                    args_msg = f"```json\n{args_str}\n```"
-                                    aggregated_parts.append(args_msg)
-
-                        aggregated_text = "\n\n".join(aggregated_parts).strip()
+                        aggregated_text = "\n".join(aggregated_parts).strip()
                         history[-1]["content"] = aggregated_text
 
                         token_text = collect_token_stats(loop)

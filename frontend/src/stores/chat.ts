@@ -296,6 +296,50 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // 需要过滤的内部工具名（模型推理等，不是真实工具）
+  const INTERNAL_TOOLS = new Set(['think', 'thinking', 'thought', 'reflection'])
+
+  // 判断是否为过程型消息（系统消息/含真实tool_calls的assistant消息）
+  function isProcessMessage(data: any): boolean {
+    const role = data.role || ''
+    // 系统消息是过程步骤
+    if (role === 'system' || role === 'System') {
+      return true
+    }
+    // assistant消息如果有真实tool_calls（排除内部工具），也是过程步骤
+    if (data.tool_calls && data.tool_calls.length > 0) {
+      const realToolCalls = filterRealToolCalls(data.tool_calls)
+      if (realToolCalls.length > 0) {
+        return true
+      }
+    }
+    return false
+  }
+
+  // 过滤掉内部工具调用（think/thinking等）
+  function filterRealToolCalls(toolCalls: any[]): any[] {
+    if (!toolCalls) return []
+    return toolCalls.filter((tc: any) => !INTERNAL_TOOLS.has(tc.name || ''))
+  }
+
+  // 检查消息是否应该完全跳过
+  function shouldSkipMessage(data: any): boolean {
+    const role = data.role || ''
+    // 所有tool消息都跳过（工具调用摘要已在assistant消息中显示）
+    if (role === 'tool' || role === 'Tool') {
+      return true
+    }
+    // assistant消息只包含内部工具调用且无文本
+    if ((role === 'assistant' || role === 'Assistant') && data.tool_calls) {
+      const realToolCalls = filterRealToolCalls(data.tool_calls)
+      const content = (data.content || '').trim()
+      if (realToolCalls.length === 0 && !content) {
+        return true
+      }
+    }
+    return false
+  }
+
   function handleWebSocketMessage(data: any) {
     console.log('📨 WebSocket message received:', data)
     console.log('📦 Current messages count:', messages.value.length)
@@ -303,20 +347,40 @@ export const useChatStore = defineStore('chat', () => {
     const lastMessage = messages.value[messages.value.length - 1]
 
     switch (data.type) {
-      case 'message':
-        // 处理聊天消息
-        if (lastMessage && lastMessage.content === '') {
-          // 更新占位消息
-          lastMessage.content = formatMessageContent(data)
-        } else {
-          // 添加新消息
+      case 'message': {
+        // 跳过纯内部工具消息（think/thinking等）
+        if (shouldSkipMessage(data)) {
+          break
+        }
+
+        const formattedContent = formatMessageContent(data)
+        const isProcess = isProcessMessage(data)
+
+        // 每条消息独立一个对话框
+        if (isProcess) {
+          // 过程型消息：独立对话框，使用过程步骤样式
           messages.value.push({
-            role: data.role || 'assistant',
-            content: formatMessageContent(data),
-            toolCalls: data.tool_calls,
+            role: 'assistant',
+            content: formattedContent,
+            isProcessStep: true,
           })
+        } else {
+          // 非过程型消息（普通assistant回复）
+          const lastMessage = messages.value[messages.value.length - 1]
+          if (lastMessage && lastMessage.content === '') {
+            // 更新占位消息
+            lastMessage.content = formattedContent
+          } else {
+            // 添加新消息
+            messages.value.push({
+              role: data.role || 'assistant',
+              content: formattedContent,
+              toolCalls: data.tool_calls,
+            })
+          }
         }
         break
+      }
 
       case 'slide_preview':
         // 处理幻灯片预览消息
@@ -387,11 +451,11 @@ export const useChatStore = defineStore('chat', () => {
         if (data.file) {
           downloadUrl.value = `/api/download/${taskId.value}`
           if (lastMessage && lastMessage.content === '') {
-            lastMessage.content = '📄 幻灯片生成完成，点击下方按钮下载文件'
+            lastMessage.content = '幻灯片生成完成，点击右侧按钮下载文件'
           } else {
             messages.value.push({
               role: 'assistant',
-              content: '📄 幻灯片生成完成，点击下方按钮下载文件',
+              content: '幻灯片生成完成，点击右侧按钮下载文件',
             })
           }
         }
@@ -402,11 +466,11 @@ export const useChatStore = defineStore('chat', () => {
         // 处理错误
         ElMessage.error(data.message || '生成过程中发生错误')
         if (lastMessage && lastMessage.content === '') {
-          lastMessage.content = `❌ 错误: ${data.message}`
+          lastMessage.content = `错误: ${data.message}`
         } else {
           messages.value.push({
             role: 'assistant',
-            content: `❌ 错误: ${data.message}`,
+            content: `错误: ${data.message}`,
           })
         }
         isGenerating.value = false
@@ -414,23 +478,123 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function formatMessageContent(data: any): string {
-    let content = data.content || ''
+  // 工具调用凝练描述映射
+  const TOOL_SUMMARIES: Record<string, string> = {
+    web_search: '搜索资料',
+    search: '搜索资料',
+    read_file: '读取文件',
+    read: '读取文件',
+    write_file: '写入文件',
+    write: '写入文件',
+    execute_command: '执行命令',
+    finalize: '完成任务',
+    create_slide: '生成幻灯片',
+    edit_slide: '编辑幻灯片',
+    generate_slide: '生成幻灯片',
+  }
 
-    // 如果有工具调用，格式化显示
+  function summarizeToolCall(name: string, argsStr?: string): string {
+    const base = TOOL_SUMMARIES[name] || `调用 ${name}`
+    if (!argsStr) return base
+
+    try {
+      const args = typeof argsStr === 'string' ? JSON.parse(argsStr) : argsStr
+      // 为常见工具提取关键参数做简要描述
+      if (name === 'web_search' || name === 'search') {
+        const query = args.query || args.keywords || args.q || ''
+        return query ? `搜索: ${truncate(query, 30)}` : base
+      }
+      if (name === 'read_file' || name === 'read') {
+        const path = args.path || args.file_path || args.filename || ''
+        return path ? `读取: ${truncate(path.split('/').pop() || path, 30)}` : base
+      }
+      if (name === 'write_file' || name === 'write') {
+        const path = args.path || args.file_path || args.filename || ''
+        return path ? `写入: ${truncate(path.split('/').pop() || path, 30)}` : base
+      }
+      if (name === 'execute_command') {
+        const cmd = args.command || args.cmd || ''
+        return cmd ? `执行: ${truncate(cmd, 40)}` : base
+      }
+      if (name === 'finalize') {
+        const outcome = args.outcome || ''
+        return outcome ? `完成: ${truncate(outcome, 30)}` : base
+      }
+      if (name === 'create_slide' || name === 'generate_slide') {
+        const num = args.slide_number || args.number || args.page || ''
+        return num ? `生成第 ${num} 页幻灯片` : base
+      }
+      if (name === 'edit_slide') {
+        const num = args.slide_number || args.number || args.page || ''
+        return num ? `编辑第 ${num} 页幻灯片` : base
+      }
+    } catch {
+      // JSON解析失败，使用默认描述
+    }
+    return base
+  }
+
+  function truncate(str: string, maxLen: number): string {
+    if (str.length <= maxLen) return str
+    return str.slice(0, maxLen - 3) + '...'
+  }
+
+  function formatMessageContent(data: any): string {
+    const role = data.role || 'assistant'
+
+    // system 消息：凝练为阶段描述
+    if (role === 'system' || role === 'System') {
+      const content = data.content || ''
+      // 替换冗长的系统消息
+      if (content.includes('DeepPresenter running')) {
+        return '启动任务，正在准备...'
+      }
+      // 已经是简洁描述的直接返回
+      return content
+    }
+
+    // tool 消息：跳过，因为assistant消息已显示工具调用摘要
+    if (role === 'tool' || role === 'Tool') {
+      return ''
+    }
+
+    // assistant 消息
+    const parts: string[] = []
+    const content = data.content || ''
+
+    // 如果有工具调用，优先显示工具调用摘要（过滤内部工具）
     if (data.tool_calls && data.tool_calls.length > 0) {
-      content += '\n\n'
-      data.tool_calls.forEach((tool: any) => {
-        content += `\n**Tool Call: ${tool.name}**\n`
-        content += '```json\n'
-        try {
-          const args = JSON.parse(tool.arguments)
-          content += JSON.stringify(args, null, 2)
-        } catch {
-          content += tool.arguments
-        }
-        content += '\n```\n'
+      const realToolCalls = filterRealToolCalls(data.tool_calls)
+      realToolCalls.forEach((tool: any) => {
+        parts.push(summarizeToolCall(tool.name, tool.arguments))
       })
+      // 如果有真实工具调用，显示摘要；否则降级为文本
+      if (parts.length > 0) {
+        // 如果同时有文本内容，也附带
+        if (content && content.trim()) {
+          const trimmed = content.trim()
+          if (trimmed.length < 100) {
+            parts.unshift(trimmed)
+          }
+        }
+        return parts.join('\n')
+      }
+      // 只有内部工具调用，降级为普通文本
+    }
+
+    // 普通assistant文本内容：如果内容较短直接显示，较长则凝练
+    if (content) {
+      const trimmed = content.trim()
+      // 如果内容很短，直接显示
+      if (trimmed.length < 150) {
+        return trimmed
+      }
+      // 长内容：取前几行作为摘要
+      const lines = trimmed.split('\n').filter((l: string) => l.trim())
+      if (lines.length <= 3) {
+        return trimmed
+      }
+      return lines.slice(0, 2).join('\n') + '\n...'
     }
 
     return content

@@ -3,6 +3,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   toolCalls?: ToolCall[]
+  isProcessStep?: boolean  // 标记为过程步骤消息（工具调用、系统消息等）
 }
 
 export interface ToolCall {

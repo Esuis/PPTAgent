@@ -10,9 +10,12 @@
           v-for="(message, index) in chatStore.messages"
           :key="index"
           class="message"
-          :class="message.role"
+          :class="[
+            message.role,
+            { 'process-step': message.isProcessStep }
+          ]"
         >
-          <div class="message-header">
+          <div v-if="!message.isProcessStep" class="message-header">
             <span class="role-icon">{{ getRoleEmoji(message.role) }}</span>
             <span class="role-name">{{ getRoleName(message.role) }}</span>
           </div>
@@ -52,10 +55,10 @@ function getRoleEmoji(role: string): string {
 
 function getRoleName(role: string): string {
   const names: Record<string, string> = {
-    user: 'User',
-    assistant: 'Assistant',
-    system: 'System',
-    tool: 'Tool',
+    user: '用户',
+    assistant: '助手',
+    system: '系统',
+    tool: '工具',
   }
   return names[role] || role
 }
@@ -83,6 +86,20 @@ watch(
   height: 100%;
   display: flex;
   flex-direction: column;
+  background: #F5F5F5;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.chat-card :deep(.el-card__body) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  background: #F5F5F5;
+  min-height: 0;
+  border-radius: 8px;
 }
 
 .chat-container {
@@ -90,6 +107,7 @@ watch(
   overflow-y: auto;
   padding: 20px;
   min-height: 0;
+  background: #F5F5F5;
 }
 
 .empty-state {
@@ -124,6 +142,28 @@ watch(
   background: #FFFFFF;
   border: 1px solid #e0e0e0;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* 过程步骤消息样式 - 更紧凑的独立气泡 */
+.message.process-step {
+  align-self: flex-start;
+  background: #FFFFFF;
+  border: 1px solid #e8ecf0;
+  border-left: 3px solid #B2C5E8;
+  border-radius: 0 8px 8px 0;
+  padding: 6px 12px;
+  max-width: 85%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.message.process-step .markdown-body {
+  font-size: 13px;
+  color: #5a6a7a;
+}
+
+.message.process-step .markdown-body p {
+  margin: 0;
+  line-height: 1.5;
 }
 
 .message-header {

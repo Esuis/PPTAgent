@@ -464,9 +464,32 @@ async def run_generation_task(task_id: str, user_id: str):
                 })
 
             elif isinstance(yield_msg, ChatMessage):
-                # 处理聊天消息
                 # 提取文本内容（ChatMessage.content 可能是数组格式）
                 content_text = yield_msg.text if hasattr(yield_msg, 'text') else (yield_msg.content or "")
+
+                # 过滤内部工具调用（think/thinking等模型内部推理）
+                internal_tool_names = {"think", "thinking", "thought", "reflection"}
+                filtered_tool_calls = None
+                if yield_msg.tool_calls:
+                    filtered_tool_calls = [
+                        {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        }
+                        for tc in yield_msg.tool_calls
+                        if tc.function.name not in internal_tool_names
+                    ]
+                    if not filtered_tool_calls:
+                        filtered_tool_calls = None
+
+                # 如果tool消息来自内部工具（如 Tool `think` not found），跳过
+                if yield_msg.role == Role.TOOL and content_text:
+                    skip_msg = any(
+                        content_text.startswith(f"Tool `{internal_name}")
+                        for internal_name in internal_tool_names
+                    )
+                    if skip_msg:
+                        continue
 
                 msg_data = {
                     "type": "message",
@@ -474,21 +497,31 @@ async def run_generation_task(task_id: str, user_id: str):
                     "content": content_text,
                 }
 
-                if yield_msg.tool_calls:
-                    msg_data["tool_calls"] = [
-                        {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        }
-                        for tc in yield_msg.tool_calls
-                    ]
+                if filtered_tool_calls:
+                    msg_data["tool_calls"] = filtered_tool_calls
+
+                # 如果assistant消息只有内部工具调用且无文本内容，跳过
+                if yield_msg.role == Role.ASSISTANT and not filtered_tool_calls and not content_text.strip():
+                    if yield_msg.tool_calls:  # 有tool_calls但都是内部工具
+                        continue
 
                 task_info["messages"].append(msg_data)
                 task_info["websocket_queue"].append(msg_data)
 
-                # 更新进度
+                # 为系统消息添加阶段标识
                 if yield_msg.role == Role.SYSTEM:
-                    task_info["progress"] = yield_msg.content
+                    task_info["progress"] = content_text
+                    # 提取阶段标识
+                    if "启动任务" in content_text or "准备" in content_text:
+                        msg_data["stage"] = "init"
+                    elif "研究" in content_text:
+                        msg_data["stage"] = "research"
+                    elif "模板" in content_text or "PPTAgent" in content_text.upper():
+                        msg_data["stage"] = "pptagent"
+                    elif "设计" in content_text:
+                        msg_data["stage"] = "design"
+                    elif "转换" in content_text:
+                        msg_data["stage"] = "convert"
 
             elif isinstance(yield_msg, dict) and yield_msg.get("type") == "slide_preview":
                 # 处理幻灯片预览消息
