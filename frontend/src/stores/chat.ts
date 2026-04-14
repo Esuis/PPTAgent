@@ -121,7 +121,7 @@ export const useChatStore = defineStore('chat', () => {
       if (response.status === 'queued') {
         // 进入排队状态
         isInQueue.value = true
-        queuePosition.value = response.queue_position
+        queuePosition.value = response.queue_position ?? null
         taskId.value = null
 
         // 更新占位消息
@@ -331,7 +331,7 @@ export const useChatStore = defineStore('chat', () => {
           let processedHtml = data.html_content
           processedHtml = processedHtml.replace(
             /src=["'](\/[^"']+)["']/g,
-            (match, path) => {
+            (match: string, path: string) => {
               // /opt/workspace/{id}/... -> /workspace/{id}/...
               if (path.startsWith('/opt/workspace/')) {
                 return `src="${path.replace('/opt/workspace/', '/workspace/')}"`

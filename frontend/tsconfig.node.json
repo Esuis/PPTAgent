@@ -12,6 +12,7 @@
     "moduleDetection": "force",
     "noEmit": false,
     "composite": true,
+    "outDir": "./dist-node",
 
     /* Linting */
     "strict": true,
