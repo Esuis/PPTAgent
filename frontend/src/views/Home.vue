@@ -2,8 +2,7 @@
   <div class="home-container">
     <!-- 标题区域 -->
     <div class="header">
-      <h1 class="center-title">DeepPresenter</h1>
-      <p class="center-subtitle">AI驱动的PPT智能生成平台</p>
+      <h1 class="center-title">AI驱动的PPT智能生成平台</h1>
     </div>
 
     <!-- 中间主要内容区域 -->
