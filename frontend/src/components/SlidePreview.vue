@@ -2,7 +2,17 @@
   <div class="slide-preview-container">
     <div class="preview-header">
       <h3>实时预览</h3>
-      <span class="slide-count">已生成 {{ previews.length }} 页</span>
+      <div class="header-right">
+        <span class="slide-count">已生成 {{ previews.length }} 页</span>
+        <button
+          class="download-icon-btn"
+          :disabled="!downloadUrl || isGenerating"
+          @click="handleDownload"
+          title="下载PPT"
+        >
+          <img :src="downloadIcon" alt="下载" class="download-icon-img" />
+        </button>
+      </div>
     </div>
 
     <!-- 缩略图导航 -->
@@ -88,6 +98,11 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { Loading, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import type { SlidePreview } from '@/types'
+import downloadIcon from '@/assets/download.png'
+import { useChatStore } from '@/stores/chat'
+
+const chatStore = useChatStore()
+const downloadUrl = computed(() => chatStore.downloadUrl)
 
 const props = defineProps<{
   previews: SlidePreview[]
@@ -190,6 +205,12 @@ function goToNext() {
 function goToSlide(index: number) {
   currentIndex.value = index
 }
+
+function handleDownload() {
+  if (downloadUrl.value) {
+    window.open(downloadUrl.value, '_blank')
+  }
+}
 </script>
 
 <style scoped>
@@ -219,12 +240,46 @@ function goToSlide(index: number) {
   color: #2c3e50;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .slide-count {
   font-size: 12px;
   color: #666;
   background: #e8e8e8;
   padding: 4px 12px;
   border-radius: 12px;
+}
+
+.download-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  padding: 0;
+}
+
+.download-icon-btn:hover:not(:disabled) {
+  background-color: #e0e0e0;
+}
+
+.download-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.download-icon-img {
+  width: 20px;
+  height: 20px;
 }
 
 .thumbnail-nav {

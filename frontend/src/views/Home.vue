@@ -93,6 +93,9 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  background: #F5F5F5;
+  border-radius: 8px;
+  padding: 16px;
 }
 
 .chat-area {

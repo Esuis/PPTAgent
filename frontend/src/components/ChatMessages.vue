@@ -113,16 +113,17 @@ watch(
 
 .message.user {
   align-self: flex-end;
-  background: #e3f2fd;
-  border: 1px solid #bbdefb;
+  background: #B2C5E8;
+  border: 1px solid #9AB3D8;
 }
 
 .message.assistant,
 .message.system,
 .message.tool {
   align-self: flex-start;
-  background: #f5f5f5;
+  background: #FFFFFF;
   border: 1px solid #e0e0e0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
 .message-header {

@@ -28,9 +28,9 @@
           :show-file-list="true"
           class="file-upload"
         >
-          <el-button type="primary" :disabled="chatStore.isGenerating" size="small">
-            📎 上传附件
-          </el-button>
+          <button class="icon-button" :disabled="chatStore.isGenerating" title="上传附件">
+            <img :src="uploadIcon" alt="上传" class="icon-img" />
+          </button>
           <template #tip>
             <div class="el-upload__tip">
               支持上传多个文件（PDF、Word、Excel等）
@@ -39,7 +39,7 @@
         </el-upload>
       </div>
 
-      <!-- 输入框和按钮 -->
+      <!-- 输入框和发送按钮 -->
       <div class="input-row">
         <el-input
           v-model="inputText"
@@ -58,17 +58,6 @@
         >
           {{ chatStore.isGenerating ? '生成中...' : '发送' }}
         </el-button>
-
-        <el-button
-          type="success"
-          :disabled="!chatStore.downloadUrl || chatStore.isGenerating"
-          @click="handleDownload"
-          class="download-button"
-        >
-          📥 下载PPT
-          <span v-if="!chatStore.downloadUrl" class="button-hint">（等待生成完成）</span>
-          <span v-else-if="chatStore.isGenerating" class="button-hint">（生成中...）</span>
-        </el-button>
       </div>
     </div>
   </el-card>
@@ -78,7 +67,7 @@
 import { ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import type { UploadFile } from 'element-plus'
-import { ElMessage } from 'element-plus'
+import uploadIcon from '@/assets/upload.png'
 
 const chatStore = useChatStore()
 const inputText = ref('')
@@ -113,14 +102,6 @@ async function handleSend() {
     inputText.value = ''
     fileList.value = []
     uploadedFiles.value = []
-  }
-}
-
-function handleDownload() {
-  if (chatStore.downloadUrl) {
-    window.open(chatStore.downloadUrl, '_blank')
-  } else {
-    ElMessage.warning('暂无可下载的文件')
   }
 }
 </script>
@@ -181,18 +162,39 @@ function handleDownload() {
   flex: 1;
 }
 
-.send-button,
-.download-button {
+.send-button {
   flex-shrink: 0;
-}
-
-.button-hint {
-  font-size: 12px;
-  color: #909399;
-  margin-left: 4px;
 }
 
 :deep(.el-upload-list) {
   margin-top: 8px;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  padding: 0;
+}
+
+.icon-button:hover:not(:disabled) {
+  background-color: #e0e0e0;
+}
+
+.icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.icon-img {
+  width: 20px;
+  height: 20px;
 }
 </style>
