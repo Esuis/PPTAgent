@@ -1,17 +1,25 @@
 version: '3.8'
 
 services:
-  # 前端服务
+  # 前端服务（生产模式 + 开发热更新）
   frontend:
-    image: deeppresenter-frontend:latest
+    image: deeppresenter-frontend:prd
     container_name: deeppresenter-frontend
     ports:
-      - "3000:3000"  # Vite开发服务器端口
+      - "3000:80"  # 外部3000映射到容器内Nginx 80端口
     volumes:
-      # 挂载整个frontend目录（开发模式，代码修改即时生效）
-      - ./frontend:/app
-      # 排除node_modules（使用容器内的）
-      - /app/node_modules
+      # 挂载源码目录（代码修改自动触发构建）
+      - ./frontend/src:/app/frontend/src
+      - ./frontend/public:/app/frontend/public
+      - ./frontend/index.html:/app/frontend/index.html
+      - ./frontend/vite.config.ts:/app/frontend/vite.config.ts
+      - ./frontend/package.json:/app/frontend/package.json
+      # 挂载 tsconfig 配置文件
+      - ./frontend/tsconfig.json:/app/frontend/tsconfig.json
+      - ./frontend/tsconfig.node.json:/app/frontend/tsconfig.node.json
+      # 排除node_modules和dist（使用容器内的）
+      - /app/frontend/node_modules
+      - /app/frontend/dist
     depends_on:
       - backend
     restart: unless-stopped

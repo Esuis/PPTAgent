@@ -63,6 +63,7 @@ export interface GenerateResponse {
   task_id: string
   status: string
   message: string
+  queue_position?: number
 }
 
 export interface TaskStatusResponse {
