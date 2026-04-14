@@ -3,22 +3,32 @@
     <div class="input-container">
       <!-- 设置区域 -->
       <div class="settings-row">
-        <div class="setting-item">
-          <span class="setting-label">幻灯片页数：</span>
-          <el-select v-model="settings.numPages" style="width: 120px" size="small">
-            <el-option label="Auto" value="auto" />
-            <el-option
-              v-for="i in 30"
-              :key="i"
-              :label="`${i} 页`"
-              :value="String(i)"
-            />
-          </el-select>
-        </div>
+        <el-select v-model="settings.numPages" style="width: 160px" size="small">
+          <el-option label="自动页数（Auto）" value="auto" />
+          <el-option
+            v-for="i in 30"
+            :key="i"
+            :label="`${i} 页`"
+            :value="String(i)"
+          />
+        </el-select>
       </div>
 
-      <!-- 文件上传区域 -->
-      <div class="file-upload-area">
+      <!-- 输入框 -->
+      <div class="input-row">
+        <el-input
+          v-model="inputText"
+          type="textarea"
+          :autosize="{ minRows: 2, maxRows: 4 }"
+          placeholder="请输入PPT主题，添加具体要求和参考资料。例如，基于现有知识介绍交通银行，生成10页ppt，禁止联网"
+          :disabled="chatStore.isGenerating"
+          @keyup.enter="handleSend"
+          class="message-input"
+        />
+      </div>
+
+      <!-- 上传附件与发送 -->
+      <div class="action-row">
         <el-upload
           v-model:file-list="fileList"
           :auto-upload="false"
@@ -28,27 +38,12 @@
           :show-file-list="true"
           class="file-upload"
         >
-          <button class="icon-button" :disabled="chatStore.isGenerating" title="上传附件">
+          <div class="upload-hover-wrapper" :class="{ disabled: chatStore.isGenerating }">
             <img :src="uploadIcon" alt="上传" class="icon-img" />
-          </button>
-          <template #tip>
-            <div class="el-upload__tip">
-              支持上传多个文件（PDF、Word、Excel等）
-            </div>
-          </template>
+            <span class="upload-label">上传附件</span>
+          </div>
         </el-upload>
-      </div>
 
-      <!-- 输入框和发送按钮 -->
-      <div class="input-row">
-        <el-input
-          v-model="inputText"
-          placeholder="输入你的指令，例如：基于现有知识介绍交通银行，5页，禁止联网"
-          :disabled="chatStore.isGenerating"
-          @keyup.enter="handleSend"
-          class="message-input"
-        />
-        
         <el-button
           type="primary"
           :loading="chatStore.isGenerating"
@@ -121,35 +116,6 @@ async function handleSend() {
   display: flex;
   gap: 16px;
   align-items: center;
-  padding-bottom: 12px;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-.setting-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.setting-label {
-  font-size: 14px;
-  color: #606266;
-  white-space: nowrap;
-}
-
-.file-upload-area {
-  border-bottom: 1px solid #e0e0e0;
-  padding-bottom: 16px;
-}
-
-.file-upload {
-  width: 100%;
-}
-
-.el-upload__tip {
-  font-size: 12px;
-  color: #999;
-  margin-top: 8px;
 }
 
 .input-row {
@@ -162,35 +128,48 @@ async function handleSend() {
   flex: 1;
 }
 
+.action-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.upload-hover-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.upload-hover-wrapper:hover:not(.disabled) {
+  background-color: #e0e0e0;
+}
+
+.upload-hover-wrapper.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.upload-label {
+  font-size: 13px;
+  color: #606266;
+  white-space: nowrap;
+}
+
+.file-upload {
+  display: inline-flex;
+}
+
 .send-button {
   flex-shrink: 0;
 }
 
 :deep(.el-upload-list) {
   margin-top: 8px;
-}
-
-.icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: none;
-  background: transparent;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-  padding: 0;
-}
-
-.icon-button:hover:not(:disabled) {
-  background-color: #e0e0e0;
-}
-
-.icon-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .icon-img {

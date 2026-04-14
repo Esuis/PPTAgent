@@ -110,6 +110,9 @@ onMounted(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background: #F5F5F5;
+  border-radius: 8px;
+  padding: 16px;
 }
 
 .input-area {

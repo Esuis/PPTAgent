@@ -16,7 +16,11 @@
           ]"
         >
           <div v-if="!message.isProcessStep" class="message-header">
-            <span class="role-icon">{{ getRoleEmoji(message.role) }}</span>
+            <img
+              :src="getRoleIcon(message.role)"
+              :alt="getRoleName(message.role)"
+              class="role-avatar"
+            />
             <span class="role-name">{{ getRoleName(message.role) }}</span>
           </div>
           <div class="message-content">
@@ -32,6 +36,8 @@
 import { ref, watch, nextTick } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import MarkdownIt from 'markdown-it'
+import assistantIcon from '@/assets/assistant.png'
+import userIcon from '@/assets/user.png'
 
 const chatStore = useChatStore()
 const chatContainer = ref<HTMLElement | null>(null)
@@ -43,14 +49,14 @@ const md = new MarkdownIt({
   breaks: true,
 })
 
-function getRoleEmoji(role: string): string {
-  const emojis: Record<string, string> = {
-    user: '👤',
-    assistant: '🤖',
-    system: '⚙️',
-    tool: '📝',
+function getRoleIcon(role: string): string {
+  const icons: Record<string, string> = {
+    user: userIcon,
+    assistant: assistantIcon,
+    system: assistantIcon,
+    tool: assistantIcon,
   }
-  return emojis[role] || '💬'
+  return icons[role] || assistantIcon
 }
 
 function getRoleName(role: string): string {
@@ -175,8 +181,12 @@ watch(
   color: #666;
 }
 
-.role-icon {
-  font-size: 16px;
+.role-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
 }
 
 .role-name {
