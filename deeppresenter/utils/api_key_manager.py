@@ -141,8 +141,8 @@ class ApiKeyManager:
             debug(f"[ApiKeyManager] Fetching key from {self._key_url}")
             response = requests.post(
                 self._key_url,
-                headers={"content-type": "multipart/form-data"},
-                files={"REQ_MESSAGE": (None, req_message)},
+                # headers={"content-type": "multipart/form-data"},
+                data={"REQ_MESSAGE": (None, req_message)},
                 timeout=10,
             )
             response.raise_for_status()

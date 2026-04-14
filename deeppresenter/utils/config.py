@@ -130,6 +130,46 @@ class Endpoint(BaseModel):
         tools: list[dict[str, Any]] | None = None,
     ) -> ChatCompletion:
         """Execute a chat or tool call using the endpoint client"""
+        try:
+            return await self._do_call(
+                messages, soft_response_parsing, response_format, tools
+            )
+        except Exception as e:
+            # On 401 AuthenticationError with dynamic key, refresh and retry once
+            if self._is_auth_error(e) and self.use_dynamic_api_key:
+                from deeppresenter.utils.api_key_manager import get_active_manager
+                from deeppresenter.utils.log import warning
+
+                warning(
+                    f"[{self.model}] Got 401 auth error, refreshing API key and retrying..."
+                )
+                get_active_manager().refresh_key()
+                return await self._do_call(
+                    messages, soft_response_parsing, response_format, tools
+                )
+            raise
+
+    def _is_auth_error(self, e: Exception) -> bool:
+        """Check if the exception is a 401 authentication error."""
+        from openai import AuthenticationError
+
+        if isinstance(e, AuthenticationError):
+            return True
+        # Also check for 401 status in the error
+        if hasattr(e, "status_code") and e.status_code == 401:
+            return True
+        if hasattr(e, "response") and hasattr(e.response, "status_code"):
+            return e.response.status_code == 401
+        return False
+
+    async def _do_call(
+        self,
+        messages: list[dict[str, Any]],
+        soft_response_parsing: bool,
+        response_format: type[BaseModel] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> ChatCompletion:
+        """Internal method to execute the actual API call."""
         if tools is not None:
             response = await self._client.chat.completions.create(
                 model=self.model,
