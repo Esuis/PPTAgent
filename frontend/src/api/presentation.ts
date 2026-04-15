@@ -2,7 +2,7 @@ import axios from 'axios'
 import type { GenerateResponse, TaskStatusResponse, TemplateListResponse } from '@/types'
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: './api',  // 使用相对路径，支持子目录部署
   timeout: 30000,
 })
 
@@ -58,7 +58,7 @@ export async function getTaskStatus(taskId: string): Promise<TaskStatusResponse>
  * 获取下载URL
  */
 export function getDownloadUrl(taskId: string): string {
-  return `/api/download/${taskId}`
+  return `./api/download/${taskId}`
 }
 
 /**
@@ -66,7 +66,9 @@ export function getDownloadUrl(taskId: string): string {
  */
 export function createWebSocket(taskId: string): WebSocket {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${protocol}//${window.location.host}/api/ws/${taskId}`
+  // 使用 BASE_URL 确保子目录部署时路径正确
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
+  const wsUrl = `${protocol}//${window.location.host}/ppt_generate/api/ws/${taskId}`
   return new WebSocket(wsUrl)
 }
 
@@ -75,7 +77,9 @@ export function createWebSocket(taskId: string): WebSocket {
  */
 export function createQueueWebSocket(userId: string): WebSocket {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${protocol}//${window.location.host}/api/ws/queue/${userId}`
+  // 使用 BASE_URL 确保子目录部署时路径正确
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
+  const wsUrl = `${protocol}//${window.location.host}/ppt_generate/api/ws/queue/${userId}`
   return new WebSocket(wsUrl)
 }
 
