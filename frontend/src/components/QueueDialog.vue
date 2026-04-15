@@ -1,12 +1,17 @@
 <template>
   <el-dialog
     v-model="visible"
-    title="⏳ 正在排队等待"
     width="400px"
     :close-on-click-modal="false"
     :close-on-press-escape="false"
     :show-close="false"
   >
+    <template #header>
+      <div class="dialog-header">
+        <img :src="queueIcon" class="header-icon" alt="排队中" />
+        <span>正在排队等待</span>
+      </div>
+    </template>
     <div class="queue-content">
       <div class="queue-position">
         当前位置：第 <span class="position-number">{{ position }}</span> 位
@@ -25,6 +30,7 @@
 import { computed } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { ElMessageBox } from 'element-plus'
+import queueIcon from '@/assets/queue.png'
 
 const chatStore = useChatStore()
 
@@ -50,6 +56,19 @@ async function handleCancel() {
 </script>
 
 <style scoped>
+.dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.header-icon {
+  width: 20px;
+  height: 20px;
+}
+
 .queue-content {
   text-align: center;
   padding: 20px 0;

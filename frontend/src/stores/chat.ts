@@ -3,6 +3,8 @@ import { ref } from 'vue'
 import type { ChatMessage, TaskSettings, SlidePreview } from '@/types'
 import { startGeneration, createWebSocket, createQueueWebSocket, getTemplates, cancelQueue as cancelQueueApi } from '@/api/presentation'
 import { ElMessage } from 'element-plus'
+import queueIcon from '@/assets/queue.png'
+import cancelIcon from '@/assets/cancel.png'
 
 const USER_ID_KEY = 'pptagent_user_id'
 
@@ -127,7 +129,7 @@ export const useChatStore = defineStore('chat', () => {
         // 更新占位消息
         const lastMessage = messages.value[messages.value.length - 1]
         if (lastMessage && lastMessage.content === '') {
-          lastMessage.content = `⏳ 正在排队等待，当前位置：第${response.queue_position}位`
+          lastMessage.content = `<img src="${queueIcon}" style="width:18px;height:18px;vertical-align:middle;margin-right:4px;"> 正在排队等待，当前位置：第${response.queue_position}位`
         }
 
         // 建立队列WebSocket连接
@@ -149,7 +151,7 @@ export const useChatStore = defineStore('chat', () => {
         // 更新最后一条消息
         const lastMessage = messages.value[messages.value.length - 1]
         if (lastMessage && lastMessage.content === '') {
-          lastMessage.content = `❌ ${response.message}`
+          lastMessage.content = `<img src="${cancelIcon}" style="width:18px;height:18px;vertical-align:middle;margin-right:4px;"> ${response.message}`
         }
       }
     } catch (error: any) {
@@ -160,7 +162,7 @@ export const useChatStore = defineStore('chat', () => {
 
       // 更新最后一条消息
       if (messages.value.length > 0) {
-        messages.value[messages.value.length - 1].content = '❌ 启动任务失败'
+        messages.value[messages.value.length - 1].content = `<img src="${cancelIcon}" style="width:18px;height:18px;vertical-align:middle;margin-right:4px;"> 启动任务失败`
       }
     }
   }
@@ -210,7 +212,7 @@ export const useChatStore = defineStore('chat', () => {
         // 更新消息内容
         const lastMessage = messages.value[messages.value.length - 1]
         if (lastMessage && lastMessage.content.includes('正在排队等待')) {
-          lastMessage.content = `⏳ 正在排队等待，当前位置：第${data.position}位`
+          lastMessage.content = `<img src="${queueIcon}" style="width:18px;height:18px;vertical-align:middle;margin-right:4px;"> 正在排队等待，当前位置：第${data.position}位`
         }
         break
 
@@ -253,7 +255,7 @@ export const useChatStore = defineStore('chat', () => {
         // 更新消息
         const lastMsg = messages.value[messages.value.length - 1]
         if (lastMsg && lastMsg.content.includes('正在排队等待')) {
-          lastMsg.content = '❌ 排队已取消'
+          lastMsg.content = `<img src="${cancelIcon}" style="width:18px;height:18px;vertical-align:middle;margin-right:4px;"> 排队已取消`
         }
         break
     }
@@ -639,7 +641,7 @@ export const useChatStore = defineStore('chat', () => {
       // 更新消息
       const lastMsg = messages.value[messages.value.length - 1]
       if (lastMsg && lastMsg.content.includes('正在排队等待')) {
-        lastMsg.content = '❌ 排队已取消'
+        lastMsg.content = `<img src="${cancelIcon}" style="width:18px;height:18px;vertical-align:middle;margin-right:4px;"> 排队已取消`
       }
     } catch (error) {
       console.error('Failed to cancel queue:', error)
