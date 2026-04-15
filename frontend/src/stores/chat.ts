@@ -26,32 +26,25 @@ export const useChatStore = defineStore('chat', () => {
   const queuePosition = ref<number | null>(null)
   const queueWs = ref<WebSocket | null>(null)
 
+  // 生成UUID的兼容方法（crypto.randomUUID在非HTTPS环境下不可用）
+  function generateUUID(): string {
+    // if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    //   return crypto.randomUUID()
+    // }
+    // Fallback: UUID v4
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0
+      const v = c === 'x' ? r : (r & 0x3) | 0x8
+      return v.toString(16)
+    })
+  }
+
   // 获取用户标识
   function getUserId(): string {
-    // 1. URL参数 ?guwpToken=xxx
-    const urlParams = new URLSearchParams(window.location.search)
-    const urlToken = urlParams.get('guwpToken')
-    if (urlToken) {
-      return urlToken
-    }
 
-    // 2. Cookie中的 JSESSIONID
-    const cookies = document.cookie.split(';')
-    for (const cookie of cookies) {
-      const [name, value] = cookie.trim().split('=')
-      if (name === 'JSESSIONID') {
-        return value
-      }
-    }
-
-    // 3. localStorage中的 pptagent_user_id
-    const storedId = localStorage.getItem(USER_ID_KEY)
-    if (storedId) {
-      return storedId
-    }
 
     // 4. 生成UUID并存入localStorage
-    const newId = crypto.randomUUID()
+    const newId = generateUUID()
     localStorage.setItem(USER_ID_KEY, newId)
     return newId
   }
