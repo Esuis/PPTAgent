@@ -359,25 +359,34 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
         # ⭐⭐⭐ 只触发取消，不清理资源 ⭐⭐⭐
         
         # 如果任务还在运行，请求取消
+        # 注意：需要同时检查 running_tasks 和 task.done()
+        # 因为任务可能已完成（task_info["status"] 已变为 completed）
+        # 但 run_generation_task 的 finally 还没来得及清理 running_tasks
         if task_id in running_tasks:
             task = running_tasks[task_id]
             if not task.done():
-                logger.info(f"[WebSocket] Requesting cancel: task_id={task_id}")
-                # 设置取消标志（让任务在下一个循环检查点退出）
-                if task_info:
-                    task_info["cancelled"] = True
-                # 发送取消信号（触发 CancelledError）
-                task.cancel()
-                # 等待任务处理取消（让它的 finally 执行清理）
-                try:
-                    await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
-                    logger.info(f"[WebSocket] Task cancelled gracefully: task_id={task_id}")
-                except asyncio.CancelledError:
-                    logger.info(f"[WebSocket] Task cancelled (CancelledError): task_id={task_id}")
-                except asyncio.TimeoutError:
-                    logger.warning(f"[WebSocket] Task cancel timeout: task_id={task_id}")
+                # 再次确认任务状态，避免对已完成的任务发送取消
+                if task_info and task_info.get("status") in ["completed", "failed", "cancelled"]:
+                    logger.info(f"[WebSocket] Task already finished (status={task_info['status']}), skip cancel: task_id={task_id}")
+                else:
+                    logger.info(f"[WebSocket] Requesting cancel: task_id={task_id}")
+                    # 设置取消标志（让任务在下一个循环检查点退出）
+                    if task_info:
+                        task_info["cancelled"] = True
+                    # 发送取消信号（触发 CancelledError）
+                    task.cancel()
+                    # 等待任务处理取消（让它的 finally 执行清理）
+                    try:
+                        await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+                        logger.info(f"[WebSocket] Task cancelled gracefully: task_id={task_id}")
+                    except asyncio.CancelledError:
+                        logger.info(f"[WebSocket] Task cancelled (CancelledError): task_id={task_id}")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"[WebSocket] Task cancel timeout: task_id={task_id}")
             else:
                 logger.info(f"[WebSocket] Task already done: task_id={task_id}")
+        else:
+            logger.info(f"[WebSocket] Task not in running_tasks: task_id={task_id}")
         
         # 关闭 WebSocket
         try:
