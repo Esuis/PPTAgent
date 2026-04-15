@@ -17,7 +17,13 @@ from deeppresenter.main import AgentLoop
 from deeppresenter.utils.config import DeepPresenterConfig
 from deeppresenter.utils.constants import WORKSPACE_BASE
 from deeppresenter.utils.log import create_logger
+from deeppresenter.utils.log import _context_logger  # 导入上下文日志变量
 from deeppresenter.utils.typings import ChatMessage, ConvertType, InputRequest, Role
+
+# 导入 pptagent 中的 ContextVar，用于任务取消后清理
+from pptagent.response.outline import _empty_images
+from pptagent.response.induct import _allowed_contents
+from pptagent.document.doc_utils import _allowed_headings
 from pptagent import PPTAgentServer
 
 app = FastAPI(title="DeepPresenter API", version="1.0.0")
@@ -52,6 +58,9 @@ active_tasks: dict[str, dict[str, Any]] = {}
 active_users: dict[str, dict[str, Any]] = {}  # 正在生成的用户 {userId: task_info}
 waiting_queue: deque[tuple[str, dict[str, Any]]] = deque()  # 排队队列 [(userId, request_data), ...]
 user_websockets: dict[str, WebSocket] = {}  # 用户WebSocket连接 {userId: ws}
+
+# 正在运行的任务句柄，用于取消任务
+running_tasks: dict[str, asyncio.Task] = {}  # {task_id: asyncio.Task}
 
 
 # Pydantic模型
@@ -184,7 +193,12 @@ async def generate_presentation(
         # 直接执行
         active_users[user_id] = {"task_id": task_id, **task_data}
         task_data["status"] = "pending"
-        asyncio.create_task(run_generation_task(task_id, user_id))
+        
+        # 启动任务并保存句柄
+        task = asyncio.create_task(run_generation_task(task_id, user_id))
+        running_tasks[task_id] = task
+        logger.info(f"[Generate] Task started: task_id={task_id}, user_id={user_id}, active={len(active_users)}, running={len(running_tasks)}")
+        
         return GenerateResponse(
             task_id=task_id,
             status="running",
@@ -267,48 +281,42 @@ async def cancel_queue(x_user_id: str | None = Header(None, alias="X-User-Id")):
 
 @app.websocket("/api/ws/{task_id}")
 async def websocket_endpoint(websocket: WebSocket, task_id: str):
-    """WebSocket端点 - 流式推送生成进度"""
-    # 打印调试信息
-    print(f"\n=== WebSocket Connection Attempt ===")
-    print(f"Task ID: {task_id}")
-    print(f"Client: {websocket.client}")
-    print(f"Headers: {dict(websocket.headers)}")
-    print(f"Scope: {websocket.scope.get('type')}")
-    print(f"===================================\n")
+    """WebSocket端点 - 流式推送生成进度
     
-    # 尝试接受连接
+    注意：此函数只负责推送进度和触发取消，不负责资源清理
+    """
+    logger.info(f"[WebSocket] Connection attempt: task_id={task_id}")
+    
+    # 提前获取 task_info 和 user_id（避免后续访问时 task_info 可能不存在）
+    task_info = active_tasks.get(task_id)
+    user_id = task_info.get("user_id") if task_info else None
+    
     try:
+        # 尝试接受连接
         await websocket.accept()
-        print(f"✓ WebSocket accepted for {task_id}")
-    except Exception as e:
-        print(f"✗ WebSocket accept failed: {type(e).__name__}: {e}")
-        import traceback
-        traceback.print_exc()
-        return
-    
-    if task_id not in active_tasks:
-        await websocket.send_json({
-            "type": "error",
-            "message": "Task not found",
-        })
-        await websocket.close()
-        return
-    
-    task_info = active_tasks[task_id]
-    
-    try:
-        # 发送历史消息（如果任务已经在运行）
+        logger.info(f"[WebSocket] Accepted: task_id={task_id}")
+        
+        # 检查任务是否存在
+        if task_info is None:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Task not found",
+            })
+            logger.warning(f"[WebSocket] Task not found: task_id={task_id}")
+            return
+        
+        # 发送历史消息
         for msg in task_info.get("messages", []):
             await websocket.send_json(msg)
         
-        # 发送token统计（如果有）
+        # 发送token统计
         if task_info.get("token_stats"):
             await websocket.send_json({
                 "type": "token_stats",
                 "data": task_info["token_stats"],
             })
         
-        # 如果任务已完成，发送结果
+        # 发送当前状态
         if task_info["status"] == "completed":
             await websocket.send_json({
                 "type": "completed",
@@ -319,33 +327,62 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                 "type": "error",
                 "message": task_info.get("error", "Unknown error"),
             })
+        elif task_info["status"] == "cancelled":
+            await websocket.send_json({
+                "type": "error",
+                "message": "任务已取消",
+            })
         
-        # 保持连接，等待新消息
+        # 主循环：推送进度
         while True:
-            # 检查是否有新消息
+            # 发送队列中的消息
             if "websocket_queue" in task_info:
                 while task_info["websocket_queue"]:
                     msg = task_info["websocket_queue"].pop(0)
                     await websocket.send_json(msg)
             
-            # 检查任务状态
-            if task_info["status"] in ["completed", "failed"]:
+            # 检查任务是否结束
+            if task_info["status"] in ["completed", "failed", "cancelled"]:
+                logger.info(f"[WebSocket] Task finished: task_id={task_id}, status={task_info['status']}")
                 break
             
             await asyncio.sleep(0.1)
     
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for task {task_id}")
+        logger.info(f"[WebSocket] Disconnected: task_id={task_id}, user_id={user_id}")
     except Exception as e:
-        logger.error(f"WebSocket error for task {task_id}: {e}")
+        logger.error(f"[WebSocket] Error: task_id={task_id}, error={type(e).__name__}: {e}")
     finally:
-        # 用户断开连接时，从 active_users 移除并触发队列处理
-        user_id = task_info.get("user_id")
-        if user_id and user_id in active_users:
-            del active_users[user_id]
-            # 触发队列处理，启动下一个任务
-            asyncio.create_task(process_queue())
-        await websocket.close()
+        # ⭐⭐⭐ 只触发取消，不清理资源 ⭐⭐⭐
+        
+        # 如果任务还在运行，请求取消
+        if task_id in running_tasks:
+            task = running_tasks[task_id]
+            if not task.done():
+                logger.info(f"[WebSocket] Requesting cancel: task_id={task_id}")
+                # 设置取消标志（让任务在下一个循环检查点退出）
+                if task_info:
+                    task_info["cancelled"] = True
+                # 发送取消信号（触发 CancelledError）
+                task.cancel()
+                # 等待任务处理取消（让它的 finally 执行清理）
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+                    logger.info(f"[WebSocket] Task cancelled gracefully: task_id={task_id}")
+                except asyncio.CancelledError:
+                    logger.info(f"[WebSocket] Task cancelled (CancelledError): task_id={task_id}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"[WebSocket] Task cancel timeout: task_id={task_id}")
+            else:
+                logger.info(f"[WebSocket] Task already done: task_id={task_id}")
+        
+        # 关闭 WebSocket
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        
+        logger.info(f"[WebSocket] Endpoint finished: task_id={task_id}")
 
 
 @app.websocket("/api/ws/queue/{user_id}")
@@ -405,10 +442,16 @@ async def queue_websocket_endpoint(websocket: WebSocket, user_id: str):
 
 
 async def run_generation_task(task_id: str, user_id: str):
-    """后台运行生成任务"""
+    """后台运行生成任务
+    
+    注意：此函数的 finally 块是唯一的资源清理入口
+    """
+    logger.info(f"[Task] Starting: task_id={task_id}, user_id={user_id}")
+    
     task_info = active_tasks[task_id]
     task_info["status"] = "running"
     task_info["websocket_queue"] = []
+    task_info["cancelled"] = False  # 取消标志
 
     try:
         # 创建InputRequest
@@ -438,6 +481,17 @@ async def run_generation_task(task_id: str, user_id: str):
 
         # 运行生成
         async for yield_msg in loop.run(request):
+            # 检查取消标志
+            if task_info.get("cancelled"):
+                logger.info(f"[Task] Cancelled by flag: task_id={task_id}")
+                task_info["status"] = "cancelled"
+                task_info["error"] = "任务已取消"
+                task_info["websocket_queue"].append({
+                    "type": "error",
+                    "message": "任务已取消",
+                })
+                break
+            
             if isinstance(yield_msg, (str, Path)):
                 # 生成完成
                 result_file = str(yield_msg)
@@ -527,19 +581,48 @@ async def run_generation_task(task_id: str, user_id: str):
                 # 处理幻灯片预览消息
                 task_info["websocket_queue"].append(yield_msg)
 
+    except asyncio.CancelledError:
+        logger.info(f"[Task] Cancelled by asyncio: task_id={task_id}")
+        task_info["status"] = "cancelled"
+        task_info["error"] = "任务已取消"
+        task_info["websocket_queue"].append({
+            "type": "error",
+            "message": "任务已取消",
+        })
+        # 不重新抛出，让 finally 正常执行清理
+
     except Exception as e:
-        logger.error(f"Task {task_id} failed: {e}")
+        logger.error(f"[Task] Failed: task_id={task_id}, error={type(e).__name__}: {e}")
         task_info["status"] = "failed"
         task_info["error"] = str(e)
         task_info["websocket_queue"].append({
             "type": "error",
             "message": str(e),
         })
+
     finally:
-        # 任务完成后，从 active_users 中移除，并触发队列处理
+        # ⭐⭐⭐ 唯一的资源清理入口 ⭐⭐⭐
+        final_status = task_info.get("status", "unknown")
+        logger.info(f"[Task] Cleanup: task_id={task_id}, user_id={user_id}, status={final_status}")
+        
+        # 1. 清理 running_tasks
+        if task_id in running_tasks:
+            del running_tasks[task_id]
+            logger.info(f"[Task] Removed from running_tasks: task_id={task_id}, remaining={len(running_tasks)}")
+        
+        # 2. 清理 active_users
         if user_id in active_users:
             del active_users[user_id]
-        # 触发队列处理，启动下一个任务
+            logger.info(f"[Task] Removed from active_users: user_id={user_id}, remaining_active={len(active_users)}")
+        
+        # 3. 清理所有 ContextVar（避免后续任务继承旧的上下文）
+        _context_logger.set(None)
+        _empty_images.set(False)  # 重置为默认值
+        _allowed_contents.set([])  # 重置为空列表
+        _allowed_headings.set([])  # 重置为空列表
+        
+        # 4. 触发队列处理（启动下一个等待的任务）
+        logger.info(f"[Task] Triggering queue processing")
         asyncio.create_task(process_queue())
 
 
@@ -549,10 +632,13 @@ async def process_queue():
         return
 
     max_concurrent = config.queue.max_concurrent_tasks if config else 2
+    logger.info(f"[Queue] Processing: waiting={len(waiting_queue)}, active={len(active_users)}, max={max_concurrent}")
 
     while waiting_queue and len(active_users) < max_concurrent:
         user_id, task_data = waiting_queue.popleft()
         task_id = task_data["task_id"]
+        
+        logger.info(f"[Queue] Dequeuing: task_id={task_id}, user_id={user_id}")
 
         # 将任务信息更新到 active_tasks 中
         if task_id in active_tasks:
@@ -566,11 +652,14 @@ async def process_queue():
                     "type": "queue_started",
                     "task_id": task_id,
                 })
+                logger.info(f"[Queue] Notified user: user_id={user_id}")
             except Exception as e:
-                logger.error(f"Failed to send queue_started to {user_id}: {e}")
+                logger.error(f"[Queue] Failed to notify user: user_id={user_id}, error={e}")
 
-        # 启动任务
-        asyncio.create_task(run_generation_task(task_id, user_id))
+        # 启动任务并保存句柄
+        task = asyncio.create_task(run_generation_task(task_id, user_id))
+        running_tasks[task_id] = task
+        logger.info(f"[Queue] Task started: task_id={task_id}, running={len(running_tasks)}")
 
         # 更新队列中其他用户的等待位置
         for idx, (uid, _) in enumerate(waiting_queue):
@@ -581,7 +670,9 @@ async def process_queue():
                         "position": idx + 1,
                     })
                 except Exception as e:
-                    logger.error(f"Failed to send queue_update to {uid}: {e}")
+                    logger.error(f"[Queue] Failed to update position: user_id={uid}, error={e}")
+    
+    logger.info(f"[Queue] Processing done: waiting={len(waiting_queue)}, active={len(active_users)}, running={len(running_tasks)}")
 
 
 def collect_token_stats(loop: AgentLoop) -> dict:
