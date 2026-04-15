@@ -24,46 +24,62 @@ from deeppresenter.utils.constants import (
 from deeppresenter.utils.log import debug, info, logging_openai_exceptions
 
 
-def _summarize_messages(messages: list[dict[str, Any]]) -> str:
-    """Summarize messages for logging, handling multimodal content."""
+def _summarize_content(content) -> str:
+    """Summarize message content for logging, handling multimodal."""
+    if content is None:
+        return "<no content>"
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        summary_parts = []
+        for part in content:
+            if isinstance(part, dict):
+                ptype = part.get("type", "unknown")
+                if ptype == "text":
+                    summary_parts.append(f"text({part.get('text', '')})")
+                elif ptype == "image_url":
+                    url = part.get("image_url", {}).get("url", "")
+                    if url.startswith("data:"):
+                        summary_parts.append("image_url(<base64>)")
+                    else:
+                        summary_parts.append(f"image_url({url})")
+                else:
+                    summary_parts.append(f"{ptype}({part})")
+            else:
+                summary_parts.append(str(part))
+        return f"[{', '.join(summary_parts)}]"
+    return str(content)
+
+
+def _summarize_messages(messages: list) -> str:
+    """Summarize messages for logging, supporting both dict and ChatMessage."""
     parts = []
     for idx, msg in enumerate(messages):
-        role = msg.get("role", "unknown")
-        content = msg.get("content")
-        if content is None:
-            parts.append(f"  [{idx}] {role}: <no content>")
-        elif isinstance(content, str):
-            parts.append(f"  [{idx}] {role}: {content}")
-        elif isinstance(content, list):
-            # Multimodal content: list of content parts
-            summary_parts = []
-            for part in content:
-                if isinstance(part, dict):
-                    ptype = part.get("type", "unknown")
-                    if ptype == "text":
-                        summary_parts.append(f"text({part.get('text', '')})")
-                    elif ptype == "image_url":
-                        url = part.get("image_url", {}).get("url", "")
-                        if url.startswith("data:"):
-                            summary_parts.append("image_url(<base64>)")
-                        else:
-                            summary_parts.append(f"image_url({url})")
-                    else:
-                        summary_parts.append(f"{ptype}({part})")
-                else:
-                    summary_parts.append(str(part))
-            parts.append(f"  [{idx}] {role}: [{', '.join(summary_parts)}]")
+        # Support both dict and Pydantic ChatMessage
+        if isinstance(msg, dict):
+            role = msg.get("role", "unknown")
+            content = msg.get("content")
+            tool_calls = msg.get("tool_calls")
         else:
-            parts.append(f"  [{idx}] {role}: {content}")
-        # Log tool_calls in assistant messages
-        tool_calls = msg.get("tool_calls")
+            # Pydantic model (e.g. ChatMessage)
+            role = getattr(msg, "role", "unknown")
+            content = getattr(msg, "content", None)
+            tool_calls = getattr(msg, "tool_calls", None)
+
+        parts.append(f"  [{idx}] {role}: {_summarize_content(content)}")
         if tool_calls:
             tc_parts = []
             for tc in tool_calls:
-                func = tc.get("function", {})
-                tc_parts.append(
-                    f"{func.get('name', '?')}({func.get('arguments', '')})"
-                )
+                if isinstance(tc, dict):
+                    func = tc.get("function", {})
+                    tc_parts.append(
+                        f"{func.get('name', '?')}({func.get('arguments', '')})"
+                    )
+                else:
+                    # Pydantic ToolCall object
+                    tc_parts.append(
+                        f"{tc.function.name}({tc.function.arguments})"
+                    )
             parts.append(f"  [{idx}] tool_calls: [{', '.join(tc_parts)}]")
     return "\n".join(parts)
 
