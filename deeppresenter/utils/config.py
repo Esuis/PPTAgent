@@ -101,6 +101,42 @@ class Endpoint(BaseModel):
         tools: list[dict[str, Any]] | None = None,
     ) -> ChatCompletion:
         """Execute a chat or tool call using the endpoint client"""
+        # 日志：打印模型输入
+        debug(f"[Model Input] model={self.model}, base_url={self.base_url}")
+        debug(f"[Model Input] messages count={len(messages)}")
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            # 如果 content 是列表（多模态消息），简化打印
+            if isinstance(content, list):
+                content_summary = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            content_summary.append(f"text: {item.get('text', '')[:100]}..." if len(str(item.get('text', ''))) > 100 else f"text: {item.get('text', '')}")
+                        elif item.get("type") == "image_url":
+                            content_summary.append("image_url: <base64_image>")
+                        else:
+                            content_summary.append(f"{item.get('type')}: <content>")
+                    else:
+                        content_summary.append(str(item)[:100])
+                debug(f"[Model Input] message[{i}] role={role}, content={content_summary}")
+            else:
+                # 文本消息，截断长内容
+                content_str = str(content)
+                if len(content_str) > 500:
+                    debug(f"[Model Input] message[{i}] role={role}, content={content_str[:500]}... (truncated, total {len(content_str)} chars)")
+                else:
+                    debug(f"[Model Input] message[{i}] role={role}, content={content_str}")
+            # 打印 tool_calls
+            if msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    debug(f"[Model Input] message[{i}] tool_call: {tc.get('function', {}).get('name', 'unknown')}")
+        if tools:
+            debug(f"[Model Input] tools count={len(tools)}, tool_names={[t.get('function', {}).get('name', 'unknown') for t in tools]}")
+        if response_format:
+            debug(f"[Model Input] response_format={response_format}")
+
         if tools is not None:
             response = await self._client.chat.completions.create(
                 model=self.model,
@@ -126,6 +162,26 @@ class Endpoint(BaseModel):
             f"No choices returned from the model, got {response}"
         )
         message = response.choices[0].message
+
+        # 日志：打印模型输出
+        debug(f"[Model Output] model={self.model}")
+        debug(f"[Model Output] usage: prompt_tokens={response.usage.prompt_tokens if response.usage else 'N/A'}, completion_tokens={response.usage.completion_tokens if response.usage else 'N/A'}, total_tokens={response.usage.total_tokens if response.usage else 'N/A'}")
+        if message.content:
+            content_str = str(message.content)
+            if len(content_str) > 500:
+                debug(f"[Model Output] content={content_str[:500]}... (truncated, total {len(content_str)} chars)")
+            else:
+                debug(f"[Model Output] content={content_str}")
+        if message.tool_calls:
+            for tc in message.tool_calls:
+                debug(f"[Model Output] tool_call: {tc.function.name}, arguments={tc.function.arguments[:200] if tc.function.arguments and len(tc.function.arguments) > 200 else tc.function.arguments}")
+        if hasattr(message, 'reasoning') and message.reasoning:
+            reasoning_str = str(message.reasoning)
+            if len(reasoning_str) > 200:
+                debug(f"[Model Output] reasoning={reasoning_str[:200]}... (truncated)")
+            else:
+                debug(f"[Model Output] reasoning={reasoning_str}")
+
         debug(f"Response from {self.model}: {message}")
         if response_format is not None:
             message.content = response_format(
