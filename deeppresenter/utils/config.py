@@ -24,6 +24,50 @@ from deeppresenter.utils.constants import (
 from deeppresenter.utils.log import debug, info, logging_openai_exceptions
 
 
+def _summarize_messages(messages: list[dict[str, Any]]) -> str:
+    """Summarize messages for logging, handling multimodal content."""
+    parts = []
+    for idx, msg in enumerate(messages):
+        role = msg.get("role", "unknown")
+        content = msg.get("content")
+        if content is None:
+            parts.append(f"  [{idx}] {role}: <no content>")
+        elif isinstance(content, str):
+            parts.append(f"  [{idx}] {role}: {content}")
+        elif isinstance(content, list):
+            # Multimodal content: list of content parts
+            summary_parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    ptype = part.get("type", "unknown")
+                    if ptype == "text":
+                        summary_parts.append(f"text({part.get('text', '')})")
+                    elif ptype == "image_url":
+                        url = part.get("image_url", {}).get("url", "")
+                        if url.startswith("data:"):
+                            summary_parts.append("image_url(<base64>)")
+                        else:
+                            summary_parts.append(f"image_url({url})")
+                    else:
+                        summary_parts.append(f"{ptype}({part})")
+                else:
+                    summary_parts.append(str(part))
+            parts.append(f"  [{idx}] {role}: [{', '.join(summary_parts)}]")
+        else:
+            parts.append(f"  [{idx}] {role}: {content}")
+        # Log tool_calls in assistant messages
+        tool_calls = msg.get("tool_calls")
+        if tool_calls:
+            tc_parts = []
+            for tc in tool_calls:
+                func = tc.get("function", {})
+                tc_parts.append(
+                    f"{func.get('name', '?')}({func.get('arguments', '')})"
+                )
+            parts.append(f"  [{idx}] tool_calls: [{', '.join(tc_parts)}]")
+    return "\n".join(parts)
+
+
 def get_json_from_response(response: str) -> dict | list:
     """
     Extract JSON from a text response.
@@ -126,7 +170,6 @@ class Endpoint(BaseModel):
             f"No choices returned from the model, got {response}"
         )
         message = response.choices[0].message
-        debug(f"Response from {self.model}: {message}")
         if response_format is not None:
             message.content = response_format(
                 **get_json_from_response(message.content)
@@ -248,18 +291,59 @@ class LLM(BaseModel):
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
 
+        # --- [Model Input] Logging ---
+        debug(f"[Model Input] model={self.model_name}")
+        debug(f"[Model Input] messages:\n{_summarize_messages(messages)}")
+        if tools is not None:
+            tool_names = [
+                t.get("function", {}).get("name", "?") for t in tools
+            ]
+            debug(f"[Model Input] tools: {tool_names}")
+        if response_format is not None:
+            debug(f"[Model Input] response_format: {response_format.__name__}")
+        if self.sampling_parameters:
+            debug(f"[Model Input] sampling_parameters: {self.sampling_parameters}")
+
         errors = []
         iter_endpoints = cycle(self._endpoints)
         async with self._semaphore:
             for _ in range(retry_times):
                 endpoint = next(iter_endpoints)
                 try:
-                    return await endpoint.call(
+                    response = await endpoint.call(
                         messages,
                         self.soft_response_parsing,
                         response_format,
                         tools,
                     )
+
+                    # --- [Model Output] Logging ---
+                    msg = response.choices[0].message
+                    if response.usage is not None:
+                        debug(
+                            f"[Model Output] model={self.model_name} | "
+                            f"usage: prompt={response.usage.prompt_tokens}, "
+                            f"completion={response.usage.completion_tokens}, "
+                            f"total={response.usage.total_tokens}"
+                        )
+                    if msg.content:
+                        debug(
+                            f"[Model Output] content: {msg.content}"
+                        )
+                    if msg.tool_calls:
+                        tc_summary = []
+                        for tc in msg.tool_calls:
+                            tc_summary.append(
+                                f"{tc.function.name}({tc.function.arguments})"
+                            )
+                        debug(
+                            f"[Model Output] tool_calls: [{', '.join(tc_summary)}]"
+                        )
+                    reasoning = getattr(msg, "reasoning", None)
+                    if reasoning:
+                        debug(f"[Model Output] reasoning: {reasoning}")
+
+                    return response
                 except (AssertionError, ValidationError) as e:
                     errors.append(f"[{endpoint.model}] {e}")
                 except Exception as e:
