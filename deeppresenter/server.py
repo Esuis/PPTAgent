@@ -62,6 +62,9 @@ user_websockets: dict[str, WebSocket] = {}  # 用户WebSocket连接 {userId: ws}
 # 正在运行的任务句柄，用于取消任务
 running_tasks: dict[str, asyncio.Task] = {}  # {task_id: asyncio.Task}
 
+# process_queue 锁，防止并发执行
+_process_queue_lock = asyncio.Lock()
+
 
 # Pydantic模型
 class GenerateResponse(BaseModel):
@@ -448,12 +451,15 @@ async def run_generation_task(task_id: str, user_id: str):
     """
     logger.info(f"[Task] Starting: task_id={task_id}, user_id={user_id}")
     
-    task_info = active_tasks[task_id]
-    task_info["status"] = "running"
-    task_info["websocket_queue"] = []
-    task_info["cancelled"] = False  # 取消标志
+    # 初始化 task_info 为 None，确保 finally 块中可以安全访问
+    task_info = None
 
     try:
+        # 获取任务信息（如果不存在则抛出 KeyError）
+        task_info = active_tasks[task_id]
+        task_info["status"] = "running"
+        task_info["websocket_queue"] = []
+        task_info["cancelled"] = False  # 取消标志
         # 创建InputRequest
         convert_type_enum = ConvertType.DEEPPRESENTER
         if task_info["convert_type"] == "template" or "模版" in task_info["convert_type"]:
@@ -602,7 +608,7 @@ async def run_generation_task(task_id: str, user_id: str):
 
     finally:
         # ⭐⭐⭐ 唯一的资源清理入口 ⭐⭐⭐
-        final_status = task_info.get("status", "unknown")
+        final_status = task_info.get("status", "unknown") if task_info else "unknown"
         logger.info(f"[Task] Cleanup: task_id={task_id}, user_id={user_id}, status={final_status}")
         
         # 1. 清理 running_tasks
@@ -627,52 +633,69 @@ async def run_generation_task(task_id: str, user_id: str):
 
 
 async def process_queue():
-    """处理排队队列"""
+    """处理排队队列
+    
+    使用锁保护，防止多个 process_queue 实例并发执行
+    使用 running_tasks 判断运行中的任务数，更准确反映并发状态
+    """
     if not waiting_queue:
         return
 
-    max_concurrent = config.queue.max_concurrent_tasks if config else 2
-    logger.info(f"[Queue] Processing: waiting={len(waiting_queue)}, active={len(active_users)}, max={max_concurrent}")
+    # 尝试获取锁，如果已被锁定则直接返回（避免重复处理）
+    if _process_queue_lock.locked():
+        logger.info(f"[Queue] Another process_queue is running, skipping")
+        return
 
-    while waiting_queue and len(active_users) < max_concurrent:
-        user_id, task_data = waiting_queue.popleft()
-        task_id = task_data["task_id"]
-        
-        logger.info(f"[Queue] Dequeuing: task_id={task_id}, user_id={user_id}")
+    async with _process_queue_lock:
+        # 再次检查队列（可能在等待锁时已被处理）
+        if not waiting_queue:
+            logger.info(f"[Queue] Queue is empty after acquiring lock")
+            return
 
-        # 将任务信息更新到 active_tasks 中
-        if task_id in active_tasks:
-            active_tasks[task_id]["status"] = "pending"
-        active_users[user_id] = task_data
+        max_concurrent = config.queue.max_concurrent_tasks if config else 2
+        logger.info(f"[Queue] Processing started: waiting={len(waiting_queue)}, running={len(running_tasks)}, max={max_concurrent}")
 
-        # 通知用户开始执行
-        if user_id in user_websockets:
-            try:
-                await user_websockets[user_id].send_json({
-                    "type": "queue_started",
-                    "task_id": task_id,
-                })
-                logger.info(f"[Queue] Notified user: user_id={user_id}")
-            except Exception as e:
-                logger.error(f"[Queue] Failed to notify user: user_id={user_id}, error={e}")
+        started_count = 0
+        while waiting_queue and len(running_tasks) < max_concurrent:
+            user_id, task_data = waiting_queue.popleft()
+            task_id = task_data["task_id"]
+            
+            logger.info(f"[Queue] Dequeuing: task_id={task_id}, user_id={user_id}, running_before={len(running_tasks)}")
 
-        # 启动任务并保存句柄
-        task = asyncio.create_task(run_generation_task(task_id, user_id))
-        running_tasks[task_id] = task
-        logger.info(f"[Queue] Task started: task_id={task_id}, running={len(running_tasks)}")
+            # 将任务信息更新到 active_tasks 中
+            if task_id in active_tasks:
+                active_tasks[task_id]["status"] = "pending"
+            active_users[user_id] = task_data
 
-        # 更新队列中其他用户的等待位置
-        for idx, (uid, _) in enumerate(waiting_queue):
-            if uid in user_websockets:
+            # 通知用户开始执行
+            if user_id in user_websockets:
                 try:
-                    await user_websockets[uid].send_json({
-                        "type": "queue_update",
-                        "position": idx + 1,
+                    await user_websockets[user_id].send_json({
+                        "type": "queue_started",
+                        "task_id": task_id,
                     })
+                    logger.info(f"[Queue] Notified user: user_id={user_id}")
                 except Exception as e:
-                    logger.error(f"[Queue] Failed to update position: user_id={uid}, error={e}")
-    
-    logger.info(f"[Queue] Processing done: waiting={len(waiting_queue)}, active={len(active_users)}, running={len(running_tasks)}")
+                    logger.error(f"[Queue] Failed to notify user: user_id={user_id}, error={e}")
+
+            # 启动任务并保存句柄
+            task = asyncio.create_task(run_generation_task(task_id, user_id))
+            running_tasks[task_id] = task
+            started_count += 1
+            logger.info(f"[Queue] Task started: task_id={task_id}, running_after={len(running_tasks)}")
+
+            # 更新队列中其他用户的等待位置
+            for idx, (uid, _) in enumerate(waiting_queue):
+                if uid in user_websockets:
+                    try:
+                        await user_websockets[uid].send_json({
+                            "type": "queue_update",
+                            "position": idx + 1,
+                        })
+                    except Exception as e:
+                        logger.error(f"[Queue] Failed to update position: user_id={uid}, error={e}")
+        
+        logger.info(f"[Queue] Processing done: started={started_count}, waiting={len(waiting_queue)}, running={len(running_tasks)}")
 
 
 def collect_token_stats(loop: AgentLoop) -> dict:
