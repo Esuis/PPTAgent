@@ -66,6 +66,14 @@ running_tasks: dict[str, asyncio.Task] = {}  # {task_id: asyncio.Task}
 _process_queue_lock = asyncio.Lock()
 
 
+def _log_queue_state(context: str = ""):
+    """打印当前正在生成的 task ID 和排队中的 task ID"""
+    active_task_ids = [info["task_id"] for info in active_users.values()]
+    queued_task_ids = [data["task_id"] for _, data in waiting_queue]
+    prefix = f"[{context}] " if context else ""
+    logger.info(f"{prefix}正在生成的 task: {active_task_ids}, 排队中的 task: {queued_task_ids}")
+
+
 # Pydantic模型
 class GenerateResponse(BaseModel):
     task_id: str | None
@@ -201,6 +209,7 @@ async def generate_presentation(
         task = asyncio.create_task(run_generation_task(task_id, user_id))
         running_tasks[task_id] = task
         logger.info(f"[Generate] Task started: task_id={task_id}, user_id={user_id}, active={len(active_users)}, running={len(running_tasks)}")
+        _log_queue_state("Generate")
         
         return GenerateResponse(
             task_id=task_id,
@@ -212,6 +221,7 @@ async def generate_presentation(
         # 进入排队队列
         waiting_queue.append((user_id, {"task_id": task_id, **task_data}))
         queue_position = len(waiting_queue)
+        _log_queue_state("Generate-Queued")
         return GenerateResponse(
             task_id=None,
             status="queued",
@@ -437,6 +447,7 @@ async def queue_websocket_endpoint(websocket: WebSocket, user_id: str):
                 if task_id and task_id in active_tasks:
                     del active_tasks[task_id]
                 logger.info(f"Removed user {user_id} from queue due to WebSocket disconnect")
+                _log_queue_state("QueueWS-Disconnect")
                 user_removed = True
                 break
 
@@ -638,6 +649,7 @@ async def run_generation_task(task_id: str, user_id: str):
         
         # 4. 触发队列处理（启动下一个等待的任务）
         logger.info(f"[Task] Triggering queue processing")
+        _log_queue_state("Task-Cleanup")
         asyncio.create_task(process_queue())
 
 
@@ -705,6 +717,7 @@ async def process_queue():
                         logger.error(f"[Queue] Failed to update position: user_id={uid}, error={e}")
         
         logger.info(f"[Queue] Processing done: started={started_count}, waiting={len(waiting_queue)}, running={len(running_tasks)}")
+        _log_queue_state("Queue-Done")
 
 
 def collect_token_stats(loop: AgentLoop) -> dict:
