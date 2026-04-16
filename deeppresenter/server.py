@@ -169,6 +169,19 @@ async def generate_presentation(
     # 生成任务ID（不使用斜杠，避免WebSocket路由问题）
     task_id = uuid.uuid4().hex[:16]
 
+    # 校验上传文件类型
+    ALLOWED_EXTENSIONS = {'.txt', '.md', '.docx', '.pdf'}
+    if files:
+        for file in files:
+            if file.filename:
+                ext = Path(file.filename).suffix.lower()
+                if ext not in ALLOWED_EXTENSIONS:
+                    return GenerateResponse(
+                        task_id=None,
+                        status="failed",
+                        message=f"不支持的文件格式: {ext}，仅支持 .txt、.md、.docx、.pdf 格式",
+                    )
+
     # 保存上传的文件
     attachments = []
     if files:

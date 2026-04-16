@@ -40,6 +40,7 @@
           :on-exceed="handleExceed"
           :before-upload="beforeUpload"
           :show-file-list="true"
+          accept=".txt,.md,.docx,.pdf"
           class="file-upload"
         >
           <div class="upload-hover-wrapper" :class="{ disabled: chatStore.isGenerating }">
@@ -82,8 +83,18 @@ const settings = ref({
 })
 
 const MAX_FILE_SIZE = 3 * 1024 * 1024 // 3MB
+const ALLOWED_EXTENSIONS = ['.txt', '.md', '.docx', '.pdf']
+
+function isAllowedFile(file: File): boolean {
+  const fileName = file.name.toLowerCase()
+  return ALLOWED_EXTENSIONS.some((ext) => fileName.endsWith(ext))
+}
 
 function beforeUpload(file: File) {
+  if (!isAllowedFile(file)) {
+    ElMessage.error('仅支持上传 .txt、.md、.docx、.pdf 格式的文件')
+    return false
+  }
   if (file.size > MAX_FILE_SIZE) {
     ElMessage.error('附件大小不能超过3MB')
     return false
@@ -97,6 +108,15 @@ function handleExceed() {
 
 function handleFileChange(file: UploadFile) {
   if (file.raw) {
+    if (!isAllowedFile(file.raw)) {
+      // 移除不支持的文件
+      const index = fileList.value.findIndex((f) => f.uid === file.uid)
+      if (index !== -1) {
+        fileList.value.splice(index, 1)
+      }
+      ElMessage.error('仅支持上传 .txt、.md、.docx、.pdf 格式的文件')
+      return
+    }
     if (file.raw.size > MAX_FILE_SIZE) {
       // 移除超限文件
       const index = fileList.value.findIndex((f) => f.uid === file.uid)
