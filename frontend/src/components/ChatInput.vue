@@ -24,6 +24,8 @@
           :disabled="chatStore.isGenerating"
           @keyup.enter="handleSend"
           class="message-input"
+          maxlength="2000"
+          show-word-limit
         />
       </div>
 
@@ -34,7 +36,9 @@
           :auto-upload="false"
           :on-change="handleFileChange"
           :on-remove="handleFileRemove"
-          multiple
+          :limit="1"
+          :on-exceed="handleExceed"
+          :before-upload="beforeUpload"
           :show-file-list="true"
           class="file-upload"
         >
@@ -61,6 +65,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
+import { ElMessage } from 'element-plus'
 import type { UploadFile } from 'element-plus'
 import uploadIcon from '@/assets/upload.png'
 
@@ -76,8 +81,31 @@ const settings = ref({
   template: 'auto',
 })
 
+const MAX_FILE_SIZE = 3 * 1024 * 1024 // 3MB
+
+function beforeUpload(file: File) {
+  if (file.size > MAX_FILE_SIZE) {
+    ElMessage.error('附件大小不能超过3MB')
+    return false
+  }
+  return true
+}
+
+function handleExceed() {
+  ElMessage.warning('最多只能上传1个附件')
+}
+
 function handleFileChange(file: UploadFile) {
   if (file.raw) {
+    if (file.raw.size > MAX_FILE_SIZE) {
+      // 移除超限文件
+      const index = fileList.value.findIndex((f) => f.uid === file.uid)
+      if (index !== -1) {
+        fileList.value.splice(index, 1)
+      }
+      ElMessage.error('附件大小不能超过3MB')
+      return
+    }
     uploadedFiles.value.push(file.raw)
   }
 }
