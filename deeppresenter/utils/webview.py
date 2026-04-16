@@ -116,13 +116,7 @@ class PlaywrightConverter:
             )
         try:
             for html, pdf in zip(sorted(html_files), pdf_files):
-                await page.goto(
-                    Path(html).resolve().as_uri(),
-                    wait_until="load",
-                    timeout=60000,
-                )
-                # Wait for rendering to settle (fonts, images, etc.)
-                await page.wait_for_timeout(1000)
+                await page.goto(Path(html).resolve().as_uri(), wait_until="networkidle")
                 await page.pdf(path=pdf, **PDF_OPTIONS, **ASPECT_RATIOS[aspect_ratio])
         except Exception as e:
             error(f"Failed to convert HTML to PDF: {e}")

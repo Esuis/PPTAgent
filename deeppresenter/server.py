@@ -198,7 +198,6 @@ async def generate_presentation(
         task = asyncio.create_task(run_generation_task(task_id, user_id))
         running_tasks[task_id] = task
         logger.info(f"[Generate] Task started: task_id={task_id}, user_id={user_id}, active={len(active_users)}, running={len(running_tasks)}")
-        _log_queue_state("Generate")
         
         return GenerateResponse(
             task_id=task_id,
@@ -210,7 +209,6 @@ async def generate_presentation(
         # 进入排队队列
         waiting_queue.append((user_id, {"task_id": task_id, **task_data}))
         queue_position = len(waiting_queue)
-        _log_queue_state("Generate-Queued")
         return GenerateResponse(
             task_id=None,
             status="queued",
@@ -278,7 +276,6 @@ async def cancel_queue(x_user_id: str | None = Header(None, alias="X-User-Id")):
                     pass
             return {"success": True, "message": "排队已取消"}
 
-    _log_queue_state("CancelQueue-NotFound")
     return {"success": False, "message": "未找到排队记录"}
 
 
@@ -428,7 +425,6 @@ async def queue_websocket_endpoint(websocket: WebSocket, user_id: str):
                 if task_id and task_id in active_tasks:
                     del active_tasks[task_id]
                 logger.info(f"Removed user {user_id} from queue due to WebSocket disconnect")
-                _log_queue_state("QueueWS-Disconnect")
                 user_removed = True
                 break
 
@@ -627,7 +623,6 @@ async def run_generation_task(task_id: str, user_id: str):
         
         # 4. 触发队列处理（启动下一个等待的任务）
         logger.info(f"[Task] Triggering queue processing")
-        _log_queue_state("Task-Cleanup")
         asyncio.create_task(process_queue())
 
 
@@ -678,7 +673,6 @@ async def process_queue():
                     logger.error(f"[Queue] Failed to update position: user_id={uid}, error={e}")
     
     logger.info(f"[Queue] Processing done: waiting={len(waiting_queue)}, active={len(active_users)}, running={len(running_tasks)}")
-    _log_queue_state("Queue-Done")
 
 
 def collect_token_stats(loop: AgentLoop) -> dict:
@@ -737,13 +731,6 @@ def collect_token_stats(loop: AgentLoop) -> dict:
         "total_all": total_all,
     }
 
-
-def _log_queue_state(context: str = ""):
-    """打印当前正在生成的 task ID 和排队中的 task ID"""
-    active_task_ids = [info["task_id"] for info in active_users.values()]
-    queued_task_ids = [data["task_id"] for _, data in waiting_queue]
-    prefix = f"[{context}] " if context else ""
-    logger.info(f"{prefix}正在生成的 task: {active_task_ids}, 排队中的 task: {queued_task_ids}")
 
 # 挂载workspace目录，用于访问HTML幻灯片中的本地图片
 # 注意：必须在挂载 "/" 之前，否则会被 "/" 的StaticFiles拦截
