@@ -17,6 +17,8 @@ services:
       # 挂载 tsconfig 配置文件
       - ./frontend/tsconfig.json:/app/frontend/tsconfig.json
       - ./frontend/tsconfig.node.json:/app/frontend/tsconfig.node.json
+      # 挂载 Nginx 配置文件（修改后重启容器即生效，无需重建镜像）
+      - ./frontend/nginx.conf:/etc/nginx/sites-available/default:ro
       # 排除node_modules和dist（使用容器内的）
       - /app/frontend/node_modules
       - /app/frontend/dist
@@ -30,6 +32,7 @@ services:
   backend:
     image: deeppresenter-backend:latest
     container_name: deeppresenter-backend
+    init: true
     ports:
       - "8000:8000"
     volumes:

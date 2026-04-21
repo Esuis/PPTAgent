@@ -11,14 +11,16 @@ class Design(Agent):
         Args:
             slide_mtimes: 记录每个文件上次推送时的mtime，会被原地更新
         """
-        slide_files = sorted((self.workspace / "slides").glob("slide_*.html"))
+        # 递归查找所有slide_*.html文件，因为Design agent可能在子目录中创建slides
+        # 例如: workspace/project_name/slides/slide_01.html
+        slide_files = sorted(self.workspace.rglob("slide_*.html"))
         if not slide_files:
             return
 
         for idx, slide_file in enumerate(slide_files):
             try:
                 current_mtime = slide_file.stat().st_mtime
-                last_mtime = slide_mtimes.get(slide_file.name, 0.0)
+                last_mtime = slide_mtimes.get(str(slide_file), 0.0)
 
                 if current_mtime > last_mtime:
                     html_content = slide_file.read_text(encoding="utf-8")
@@ -29,13 +31,12 @@ class Design(Agent):
                         "mode": "design",
                         "total_slides": len(slide_files),
                     }
-                    slide_mtimes[slide_file.name] = current_mtime
+                    slide_mtimes[str(slide_file)] = current_mtime
             except Exception:
                 # 如果读取失败，不影响主流程
                 pass
 
     async def loop(self, req: InputRequest, markdown_file: str):
-        (self.workspace / "slides").mkdir(exist_ok=True)
         slide_mtimes: dict[str, float] = {}  # 记录每个slide文件上次推送时的mtime
 
         while True:

@@ -170,7 +170,6 @@ class AgentLoop:
                     (self.workspace / ".html2pptx-error.txt").write_text(
                         str(e) + "\n" + traceback.format_exc()
                     )
-                finally:
                     async with PlaywrightConverter() as pc:
                         await pc.convert_to_pdf(
                             list(slide_html_dir.glob("*.html")),

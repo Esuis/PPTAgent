@@ -1,13 +1,14 @@
 """FastAPI server for DeepPresenter Vue frontend"""
 
 import asyncio
+import json
 import uuid
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Header
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -110,6 +111,21 @@ async def get_templates():
 async def get_task_status(task_id: str):
     """查询任务状态"""
     if task_id not in active_tasks:
+        # 检查文件系统，判断任务是否已完成
+        task_dir = WORKSPACE_BASE / task_id
+        output_json = task_dir / "intermediate_output.json"
+        if output_json.exists():
+            try:
+                data = json.loads(output_json.read_text(encoding="utf-8"))
+                result_file = data.get("final")
+                return TaskStatus(
+                    task_id=task_id,
+                    status="completed",
+                    progress="生成完成",
+                    result_file=result_file,
+                )
+            except (json.JSONDecodeError, OSError):
+                pass
         return TaskStatus(
             task_id=task_id,
             status="not_found",
@@ -246,14 +262,24 @@ async def generate_presentation(
 @app.get("/api/download/{task_id}")
 async def download_file(task_id: str):
     """下载生成的文件"""
-    if task_id not in active_tasks:
-        return {"error": "Task not found"}
-
-    task_info = active_tasks[task_id]
-    result_file = task_info.get("result_file")
+    # 1. 先从内存查（运行中的任务，路径可能还未写入文件）
+    task_info = active_tasks.get(task_id)
+    if task_info:
+        result_file = task_info.get("result_file")
+    else:
+        # 2. 从文件系统查（已完成的历史任务）
+        task_dir = WORKSPACE_BASE / task_id
+        output_json = task_dir / "intermediate_output.json"
+        if not output_json.exists():
+            raise HTTPException(status_code=404, detail="Task not found")
+        try:
+            data = json.loads(output_json.read_text(encoding="utf-8"))
+            result_file = data.get("final")
+        except (json.JSONDecodeError, OSError):
+            raise HTTPException(status_code=404, detail="Task result not found")
 
     if not result_file or not Path(result_file).exists():
-        return {"error": "File not found"}
+        raise HTTPException(status_code=404, detail="File not found")
 
     return FileResponse(
         path=result_file,
@@ -628,7 +654,7 @@ async def run_generation_task(task_id: str, user_id: str):
             "type": "error",
             "message": "任务已取消",
         })
-        # 不重新抛出，让 finally 正常执行清理
+        raise  # 重新抛出，让 asyncio 正确标记任务为已取消，finally 仍会执行
 
     except Exception as e:
         logger.error(f"[Task] Failed: task_id={task_id}, error={type(e).__name__}: {e}")
@@ -654,13 +680,18 @@ async def run_generation_task(task_id: str, user_id: str):
             del active_users[user_id]
             logger.info(f"[Task] Removed from active_users: user_id={user_id}, remaining_active={len(active_users)}")
         
-        # 3. 清理所有 ContextVar（避免后续任务继承旧的上下文）
+        # 3. 清理 active_tasks（任务完成后从内存移除，下载/状态接口改为从文件系统查找）
+        if task_id in active_tasks:
+            del active_tasks[task_id]
+            logger.info(f"[Task] Removed from active_tasks: task_id={task_id}, remaining={len(active_tasks)}")
+        
+        # 4. 清理所有 ContextVar（避免后续任务继承旧的上下文）
         _context_logger.set(None)
         _empty_images.set(False)  # 重置为默认值
         _allowed_contents.set([])  # 重置为空列表
         _allowed_headings.set([])  # 重置为空列表
         
-        # 4. 触发队列处理（启动下一个等待的任务）
+        # 5. 触发队列处理（启动下一个等待的任务）
         logger.info(f"[Task] Triggering queue processing")
         _log_queue_state("Task-Cleanup")
         asyncio.create_task(process_queue())

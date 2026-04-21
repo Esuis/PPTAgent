@@ -146,16 +146,28 @@ export const useChatStore = defineStore('chat', () => {
         if (lastMessage && lastMessage.content === '') {
           lastMessage.content = `<img src="${cancelIcon}" style="width:18px;height:18px;vertical-align:middle;margin-right:4px;"> ${response.message}`
         }
+      } else if (response.status === 'failed') {
+        // 后端返回失败（配置未加载、文件格式不支持等）
+        isGenerating.value = false
+        isInQueue.value = false
+        ElMessage.error(response.message || '任务启动失败')
+
+        // 更新最后一条消息
+        const lastMessage = messages.value[messages.value.length - 1]
+        if (lastMessage && lastMessage.content === '') {
+          lastMessage.content = `<img src="${cancelIcon}" style="width:18px;height:18px;vertical-align:middle;margin-right:4px;"> ${response.message || '任务启动失败'}`
+        }
       }
     } catch (error: any) {
       console.error('Failed to start generation:', error)
-      ElMessage.error(error.response?.data?.message || '启动生成任务失败')
+      const errorMsg = error.response?.data?.message || error.message || '启动生成任务失败'
+      ElMessage.error(errorMsg)
       isGenerating.value = false
       isInQueue.value = false
 
       // 更新最后一条消息
       if (messages.value.length > 0) {
-        messages.value[messages.value.length - 1].content = `<img src="${cancelIcon}" style="width:18px;height:18px;vertical-align:middle;margin-right:4px;"> 启动任务失败`
+        messages.value[messages.value.length - 1].content = `<img src="${cancelIcon}" style="width:18px;height:18px;vertical-align:middle;margin-right:4px;"> 启动任务失败：${errorMsg}`
       }
     }
   }
