@@ -1,6 +1,7 @@
 <template>
   <el-card class="chat-card">
     <div ref="chatContainer" class="chat-container">
+      <!-- 首次进入聊天时不会是空状态，由Home.vue的初始界面处理 -->
       <div v-if="chatStore.messages.length === 0" class="empty-state">
         <el-empty description="开始对话，生成你的PPT吧！" />
       </div>

@@ -1,36 +1,43 @@
 <template>
-  <el-card class="input-card">
-    <div class="input-container">
-      <!-- 设置区域 -->
-      <div class="settings-row">
-        <el-select v-model="settings.numPages" style="width: 160px" size="small">
-          <el-option label="自动页数（Auto）" value="auto" />
+  <div class="input-box">
+    <!-- 文本输入区 -->
+    <div class="input-field-row">
+      <textarea
+        v-model="inputText"
+        :placeholder="'请输入PPT主题，添加具体要求和参考资料'"
+        :disabled="chatStore.isGenerating"
+        @keydown.enter.exact="handleSend"
+        class="input-textarea"
+        maxlength="2000"
+      ></textarea>
+    </div>
+
+    <!-- 附件文件列表 -->
+    <div v-if="fileList.length > 0" class="file-list">
+      <div v-for="(file, idx) in fileList" :key="file.uid" class="file-item">
+        <img :src="uploadIcon" alt="附件" class="file-icon" />
+        <span class="file-name">{{ file.name }}</span>
+        <span class="file-remove" @click="removeFile(idx)">✕</span>
+      </div>
+    </div>
+
+    <!-- 底部工具栏 -->
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <!-- 页数选择 -->
+        <el-select v-model="settings.numPages" size="small" class="page-select">
+          <el-option label="自动页数" value="auto" />
           <el-option
             v-for="i in 30"
             :key="i"
-            :label="`${i} 页`"
+            :label="`${i}页`"
             :value="String(i)"
           />
         </el-select>
       </div>
 
-      <!-- 输入框 -->
-      <div class="input-row">
-        <el-input
-          v-model="inputText"
-          type="textarea"
-          :autosize="{ minRows: 2, maxRows: 4 }"
-          placeholder="请输入PPT主题，添加具体要求和参考资料。例如，基于现有知识介绍交通银行，生成10页ppt，禁止联网"
-          :disabled="chatStore.isGenerating"
-          @keyup.enter="handleSend"
-          class="message-input"
-          maxlength="2000"
-          show-word-limit
-        />
-      </div>
-
-      <!-- 上传附件与发送 -->
-      <div class="action-row">
+      <div class="toolbar-right">
+        <!-- 上传附件 -->
         <el-upload
           v-model:file-list="fileList"
           :auto-upload="false"
@@ -39,28 +46,32 @@
           :limit="1"
           :on-exceed="handleExceed"
           :before-upload="beforeUpload"
-          :show-file-list="true"
+          :show-file-list="false"
           accept=".txt,.md,.docx,.pdf"
-          class="file-upload"
+          class="upload-btn"
         >
-          <div class="upload-hover-wrapper" :class="{ disabled: chatStore.isGenerating }">
-            <img :src="uploadIcon" alt="上传" class="icon-img" />
+          <div class="upload-trigger" :class="{ disabled: chatStore.isGenerating }">
+            <img :src="uploadIcon" alt="上传" class="toolbar-icon" />
             <span class="upload-label">上传附件</span>
           </div>
         </el-upload>
 
-        <el-button
-          type="primary"
-          :loading="chatStore.isGenerating"
-          :disabled="!inputText && fileList.length === 0"
+        <!-- 发送按钮 -->
+        <button
+          class="send-btn"
+          :class="{ disabled: (!inputText && fileList.length === 0) || chatStore.isGenerating }"
+          :disabled="(!inputText && fileList.length === 0) || chatStore.isGenerating"
           @click="handleSend"
-          class="send-button"
         >
-          {{ chatStore.isGenerating ? '生成中...' : '发送' }}
-        </el-button>
+          <svg v-if="!chatStore.isGenerating" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="19" x2="12" y2="5"></line>
+            <polyline points="5 12 12 5 19 12"></polyline>
+          </svg>
+          <span v-else class="loading-dot">●</span>
+        </button>
       </div>
     </div>
-  </el-card>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -137,7 +148,20 @@ function handleFileRemove(file: UploadFile) {
   }
 }
 
-async function handleSend() {
+function removeFile(index: number) {
+  const removed = fileList.value.splice(index, 1)[0]
+  if (removed) {
+    const uploadIdx = uploadedFiles.value.findIndex((f) => f.name === removed.name)
+    if (uploadIdx !== -1) {
+      uploadedFiles.value.splice(uploadIdx, 1)
+    }
+  }
+}
+
+async function handleSend(e?: Event) {
+  // 阻止默认行为（textarea的enter换行）
+  if (e) e.preventDefault()
+  
   await chatStore.sendMessage(inputText.value, uploadedFiles.value, settings.value)
   
   // 清空输入
@@ -150,54 +174,150 @@ async function handleSend() {
 </script>
 
 <style scoped>
-.input-card {
-  margin-top: 0;
-}
-
-.input-container {
+/* ============ 输入框整体容器 ============ */
+.input-box {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  border: 1px solid #dcdfe6;
+  border-radius: 14px;
+  background: #fff;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.settings-row {
-  display: flex;
-  gap: 16px;
-  align-items: center;
+.input-box:focus-within {
+  border-color: #409eff;
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.15), 0 4px 24px rgba(0, 0, 0, 0.12);
 }
 
-.input-row {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
-.message-input {
+/* ============ 文本输入区 ============ */
+.input-field-row {
   flex: 1;
+  display: flex;
+  min-height: 0;
 }
 
-.action-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
+.input-textarea {
+  flex: 1;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 18px 20px;
+  font-size: 16px;
+  line-height: 1.8;
+  color: #303133;
+  background: transparent;
+  font-family: inherit;
 }
 
-.upload-hover-wrapper {
+.input-textarea::placeholder {
+  color: #c0c4cc;
+}
+
+/* ============ 附件文件列表 ============ */
+.file-list {
+  padding: 0 20px 8px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 4px;
-  padding: 6px 10px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #f5f7fa;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #606266;
+}
+
+.file-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.file-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-remove {
+  cursor: pointer;
+  color: #c0c4cc;
+  font-size: 12px;
+  padding: 0 4px;
+}
+
+.file-remove:hover {
+  color: #f56c6c;
+}
+
+/* ============ 底部工具栏 ============ */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-top: 1px solid #f0f0f0;
+  flex-shrink: 0;
+}
+
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 页数选择 - 内嵌风格 */
+.page-select {
+  width: 110px;
+}
+
+.page-select :deep(.el-input__wrapper) {
+  box-shadow: none !important;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+
+.page-select :deep(.el-input__wrapper:hover) {
+  background: #eef1f5;
+}
+
+/* 上传按钮 */
+.upload-btn {
+  display: inline-flex;
+}
+
+.upload-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 20px;
   border-radius: 8px;
+  background: #f5f7fa;
   cursor: pointer;
   transition: background-color 0.2s;
 }
 
-.upload-hover-wrapper:hover:not(.disabled) {
-  background-color: #e0e0e0;
+.upload-trigger:hover:not(.disabled) {
+  background: #eef1f5;
 }
 
-.upload-hover-wrapper.disabled {
+.upload-trigger.disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -208,20 +328,43 @@ async function handleSend() {
   white-space: nowrap;
 }
 
-.file-upload {
-  display: inline-flex;
+.toolbar-icon {
+  width: 20px;
+  height: 20px;
 }
 
-.send-button {
+/* ============ 发送按钮 ============ */
+.send-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: #409eff;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s, transform 0.15s;
   flex-shrink: 0;
 }
 
-:deep(.el-upload-list) {
-  margin-top: 8px;
+.send-btn:hover:not(.disabled) {
+  background: #66b1ff;
+  transform: scale(1.05);
 }
 
-.icon-img {
-  width: 20px;
-  height: 20px;
+.send-btn.disabled {
+  background: #c0c4cc;
+  cursor: not-allowed;
+}
+
+.loading-dot {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 </style>
