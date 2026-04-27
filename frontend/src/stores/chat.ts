@@ -92,10 +92,11 @@ export const useChatStore = defineStore('chat', () => {
       content: userContent,
     })
 
-    // 添加助手占位消息
+    // 添加助手占位消息（所有assistant内容合并到此消息中）
     messages.value.push({
       role: 'assistant',
       content: '',
+      steps: [],
     })
 
     try {
@@ -347,11 +348,17 @@ export const useChatStore = defineStore('chat', () => {
     return false
   }
 
+  // 获取最后一条assistant消息（用于向其追加步骤/内容）
+  function getLastAssistantMessage(): ChatMessage | null {
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      if (messages.value[i].role === 'assistant') return messages.value[i]
+    }
+    return null
+  }
+
   function handleWebSocketMessage(data: any) {
     console.log('📨 WebSocket message received:', data)
     console.log('📦 Current messages count:', messages.value.length)
-    
-    const lastMessage = messages.value[messages.value.length - 1]
 
     switch (data.type) {
       case 'message': {
@@ -362,27 +369,31 @@ export const useChatStore = defineStore('chat', () => {
 
         const formattedContent = formatMessageContent(data)
         const isProcess = isProcessMessage(data)
+        const lastAssistant = getLastAssistantMessage()
 
-        // 每条消息独立一个对话框
         if (isProcess) {
-          // 过程型消息：独立对话框，使用过程步骤样式
-          messages.value.push({
-            role: 'assistant',
-            content: formattedContent,
-            isProcessStep: true,
-          })
+          // 过程型消息：追加到最后一条assistant消息的steps中
+          if (lastAssistant) {
+            if (!lastAssistant.steps) lastAssistant.steps = []
+            lastAssistant.steps.push({ content: formattedContent })
+          }
         } else {
           // 非过程型消息（普通assistant回复）
-          const lastMessage = messages.value[messages.value.length - 1]
-          if (lastMessage && lastMessage.content === '') {
-            // 更新占位消息
-            lastMessage.content = formattedContent
+          if (lastAssistant && lastAssistant.content === '') {
+            // 更新占位消息的主体内容
+            lastAssistant.content = formattedContent
+          } else if (lastAssistant) {
+            // 已有内容，追加到现有assistant消息
+            lastAssistant.content = lastAssistant.content
+              ? lastAssistant.content + '\n\n' + formattedContent
+              : formattedContent
           } else {
-            // 添加新消息
+            // 兜底：没有assistant消息时才新增
             messages.value.push({
               role: data.role || 'assistant',
               content: formattedContent,
               toolCalls: data.tool_calls,
+              steps: [],
             })
           }
         }
@@ -453,35 +464,37 @@ export const useChatStore = defineStore('chat', () => {
         }
         break
 
-      case 'completed':
+      case 'completed': {
         // 处理完成状态
         if (data.file) {
           downloadUrl.value = `/api/download/${taskId.value}`
-          if (lastMessage && lastMessage.content === '') {
-            lastMessage.content = '幻灯片生成完成，点击右侧按钮下载文件'
-          } else {
-            messages.value.push({
-              role: 'assistant',
-              content: '幻灯片生成完成，点击右侧按钮下载文件',
-            })
+          const lastAssistant = getLastAssistantMessage()
+          if (lastAssistant && !lastAssistant.content) {
+            lastAssistant.content = '幻灯片生成完成，点击右侧按钮下载文件'
+          } else if (lastAssistant) {
+            lastAssistant.content = lastAssistant.content
+              ? lastAssistant.content + '\n\n幻灯片生成完成，点击右侧按钮下载文件'
+              : '幻灯片生成完成，点击右侧按钮下载文件'
           }
         }
         isGenerating.value = false
         break
+      }
 
-      case 'error':
+      case 'error': {
         // 处理错误
         ElMessage.error(data.message || '生成过程中发生错误')
-        if (lastMessage && lastMessage.content === '') {
-          lastMessage.content = `错误: ${data.message}`
-        } else {
-          messages.value.push({
-            role: 'assistant',
-            content: `错误: ${data.message}`,
-          })
+        const lastAssistant = getLastAssistantMessage()
+        if (lastAssistant && !lastAssistant.content) {
+          lastAssistant.content = `错误: ${data.message}`
+        } else if (lastAssistant) {
+          lastAssistant.content = lastAssistant.content
+            ? lastAssistant.content + `\n\n错误: ${data.message}`
+            : `错误: ${data.message}`
         }
         isGenerating.value = false
         break
+      }
     }
   }
 

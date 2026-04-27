@@ -1,9 +1,15 @@
+// 过程步骤（嵌入在assistant消息内）
+export interface ProcessStep {
+  content: string
+}
+
 // 聊天消息类型
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   toolCalls?: ToolCall[]
-  isProcessStep?: boolean  // 标记为过程步骤消息（工具调用、系统消息等）
+  steps?: ProcessStep[]        // 过程步骤（工具调用、系统消息等），嵌入在当前消息内
+  isProcessStep?: boolean      // 兼容旧数据，新逻辑不再使用
 }
 
 export interface ToolCall {
