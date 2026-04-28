@@ -583,14 +583,29 @@ async def run_generation_task(task_id: str, user_id: str):
                 })
 
             elif isinstance(yield_msg, ChatMessage):
-                # 提取文本内容（ChatMessage.content 可能是数组格式）
-                content_text = yield_msg.text if hasattr(yield_msg, 'text') else (yield_msg.content or "")
+                # 提取纯文本内容（仅文本块，不包含tool_calls序列化）
+                # 注意：yield_msg.text 会把 tool_calls 也序列化进文本，不适用
+                content_text = ""
+                if hasattr(yield_msg, 'content') and isinstance(yield_msg.content, list):
+                    for block in yield_msg.content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            content_text += block.get("text", "")
+                elif hasattr(yield_msg, 'content') and isinstance(yield_msg.content, str):
+                    content_text = yield_msg.content
 
-                # 过滤内部工具调用（think/thinking等模型内部推理）
+                # 构建tool_calls列表：保留内部工具（thinking等）以便前端展示思考过程
                 internal_tool_names = {"think", "thinking", "thought", "reflection"}
-                filtered_tool_calls = None
+                all_tool_calls = None
+                real_tool_calls = None
                 if yield_msg.tool_calls:
-                    filtered_tool_calls = [
+                    all_tool_calls = [
+                        {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        }
+                        for tc in yield_msg.tool_calls
+                    ]
+                    real_tool_calls = [
                         {
                             "name": tc.function.name,
                             "arguments": tc.function.arguments,
@@ -598,17 +613,33 @@ async def run_generation_task(task_id: str, user_id: str):
                         for tc in yield_msg.tool_calls
                         if tc.function.name not in internal_tool_names
                     ]
-                    if not filtered_tool_calls:
-                        filtered_tool_calls = None
+                    if not real_tool_calls:
+                        real_tool_calls = None
 
                 # 如果tool消息来自内部工具（如 Tool `think` not found），跳过
-                if yield_msg.role == Role.TOOL and content_text:
+                # 使用 yield_msg.text 来检测（因为纯文本content可能为空）
+                full_text = yield_msg.text if hasattr(yield_msg, 'text') else content_text
+                if yield_msg.role == Role.TOOL and full_text:
                     skip_msg = any(
-                        content_text.startswith(f"Tool `{internal_name}")
+                        full_text.startswith(f"Tool `{internal_name}")
                         for internal_name in internal_tool_names
                     )
                     if skip_msg:
                         continue
+
+                # 检查是否有thinking内容（用于判断是否跳过）
+                has_thinking_content = False
+                if yield_msg.tool_calls:
+                    for tc in yield_msg.tool_calls:
+                        if tc.function.name in internal_tool_names:
+                            try:
+                                args = json.loads(tc.function.arguments) if isinstance(tc.function.arguments, str) else tc.function.arguments
+                                thought = args.get("thought", args.get("thinking", args.get("content", "")))
+                                if thought and thought.strip():
+                                    has_thinking_content = True
+                                    break
+                            except (json.JSONDecodeError, AttributeError):
+                                pass
 
                 msg_data = {
                     "type": "message",
@@ -616,12 +647,14 @@ async def run_generation_task(task_id: str, user_id: str):
                     "content": content_text,
                 }
 
-                if filtered_tool_calls:
-                    msg_data["tool_calls"] = filtered_tool_calls
+                # 包含所有tool_calls（含thinking等内部工具），让前端决定如何展示
+                if all_tool_calls:
+                    msg_data["tool_calls"] = all_tool_calls
 
-                # 如果assistant消息只有内部工具调用且无文本内容，跳过
-                if yield_msg.role == Role.ASSISTANT and not filtered_tool_calls and not content_text.strip():
-                    if yield_msg.tool_calls:  # 有tool_calls但都是内部工具
+                # 跳过完全没有有效内容的assistant消息
+                # （无真实工具调用、无文本、也无thinking内容时才跳过）
+                if yield_msg.role == Role.ASSISTANT and not real_tool_calls and not content_text.strip() and not has_thinking_content:
+                    if yield_msg.tool_calls:  # 有tool_calls但都是空壳内部工具
                         continue
 
                 task_info["messages"].append(msg_data)

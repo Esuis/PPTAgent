@@ -21,6 +21,14 @@
           >
             <!-- ======== 用户消息 ======== -->
             <template v-if="message.role === 'user'">
+              <div class="message-header user-header">
+                <img
+                  :src="getRoleIcon(message.role)"
+                  :alt="getRoleName(message.role)"
+                  class="role-avatar"
+                />
+                <span class="role-name">{{ getRoleName(message.role) }}</span>
+              </div>
               <div class="message-content user-content">
                 <div v-html="renderMarkdown(message.content)" class="markdown-body"></div>
               </div>
@@ -274,6 +282,14 @@ watch(
 }
 
 /* ============ 用户消息内容 ============ */
+.user-header {
+  flex-direction: row-reverse;
+}
+
+.user-header .role-name {
+  color: #4a6a8a;
+}
+
 .user-content {
   line-height: 1.6;
 }

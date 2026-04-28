@@ -15,20 +15,8 @@
       </div>
     </div>
 
-    <!-- 缩略图导航 -->
-    <div class="thumbnail-nav" v-if="previews.length > 0">
-      <div
-        v-for="(preview, index) in previews"
-        :key="`thumb-${index}-${preview.number}`"
-        :class="['thumbnail-item', { active: currentIndex === index }]"
-        @click="goToSlide(index)"
-      >
-        <span class="thumb-number">{{ preview.number }}</span>
-      </div>
-    </div>
-
-    <!-- 主预览区域 -->
-    <div class="preview-main">
+    <!-- 主预览区域 - 上下滚动 -->
+    <div class="preview-main" ref="scrollContainerRef">
       <!-- 空状态或正在生成 -->
       <div v-if="previews.length === 0" class="empty-state">
         <el-icon :size="48" color="#409eff" class="loading-icon">
@@ -37,66 +25,43 @@
         <p class="generating-text">等待生成中</p>
       </div>
 
-      <div v-else-if="currentPreview" class="preview-content">
-        <!-- Design模式 - HTML预览 -->
-        <div v-if="currentPreview.type === 'html'" ref="wrapperRef" class="iframe-wrapper">
-          <div class="iframe-scaler" :style="{
-            width: '1280px',
-            height: '720px',
-            transform: `scale(${scaleFactor})`,
-            transformOrigin: 'center center'
-          }">
-            <iframe
-              ref="iframeRef"
-              :srcdoc="currentPreview.content"
-              :sandbox="'allow-same-origin'"
-              class="preview-iframe"
-              :key="currentIndex"
-            ></iframe>
+      <!-- 幻灯片列表 -->
+      <div v-else class="slide-list">
+        <div
+          v-for="(preview, index) in previews"
+          :key="`slide-${index}-${preview.number}`"
+          class="slide-card"
+        >
+          <!-- 页码标签 -->
+          <div class="slide-label">第 {{ preview.number }} 页</div>
+
+          <!-- Design模式 - HTML预览 -->
+          <div v-if="preview.type === 'html'" class="slide-iframe-wrapper">
+            <div class="slide-iframe-scaler" :style="iframeScalerStyle">
+              <iframe
+                :srcdoc="preview.content"
+                sandbox="allow-same-origin"
+                class="preview-iframe"
+              ></iframe>
+            </div>
           </div>
-        </div>
 
-        <!-- PPTAgent模式 - 图片预览 -->
-        <img
-          v-else-if="currentPreview.type === 'image'"
-          :src="currentPreview.content"
-          :alt="`第 ${currentPreview.number} 页`"
-          class="preview-image"
-          :key="currentIndex"
-        />
-
-        <!-- 页码指示器 -->
-        <div class="page-indicator">
-          {{ currentIndex + 1 }} / {{ previews.length }}
+          <!-- PPTAgent模式 - 图片预览 -->
+          <img
+            v-else-if="preview.type === 'image'"
+            :src="preview.content"
+            :alt="`第 ${preview.number} 页`"
+            class="preview-image"
+          />
         </div>
       </div>
-    </div>
-
-    <!-- 控制按钮 -->
-    <div class="preview-controls" v-if="previews.length > 0">
-      <el-button-group>
-        <el-button
-          :disabled="currentIndex === 0"
-          @click="goToPrev"
-          :icon="ArrowLeft"
-        >
-          上一页
-        </el-button>
-        <el-button
-          :disabled="currentIndex === previews.length - 1"
-          @click="goToNext"
-          :icon="ArrowRight"
-        >
-          下一页
-        </el-button>
-      </el-button-group>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { Loading, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
+import { Loading } from '@element-plus/icons-vue'
 import type { SlidePreview } from '@/types'
 import downloadIcon from '@/assets/download.png'
 import { useChatStore } from '@/stores/chat'
@@ -109,61 +74,34 @@ const props = defineProps<{
   isGenerating?: boolean
 }>()
 
-const currentIndex = ref(0)
-const iframeRef = ref<HTMLIFrameElement | null>(null)
-const wrapperRef = ref<HTMLDivElement | null>(null)
-const scaleFactor = ref(1)  // 缩放比例
+const scrollContainerRef = ref<HTMLElement | null>(null)
+const scaleFactor = ref(1)
 
-const currentPreview = computed(() => {
-  if (props.previews.length === 0) return null
-  return props.previews[currentIndex.value]
-})
+// 计算缩放比例（基于容器宽度）
+function calculateScale() {
+  if (!scrollContainerRef.value) return
 
-// 计算缩放比例
-function calculateIframeSize() {
-  if (!wrapperRef.value) return
-  
-  const wrapper = wrapperRef.value
-  // wrapper的clientWidth已经不包含自身的padding: 10px
-  // 但preview-main有padding: 20px，所以wrapper的clientWidth已经是可用空间
-  const availableWidth = wrapper.clientWidth
-  const availableHeight = wrapper.clientHeight
-  
-  // HTML幻灯片的固定尺寸
+  const container = scrollContainerRef.value
+  // 减去 slide-list 的 padding (20px * 2)
+  const availableWidth = container.clientWidth - 40
+
   const slideWidth = 1280
-  const slideHeight = 720
-  
-  // 计算缩放比例（保持宽高比）
-  const scaleX = availableWidth / slideWidth
-  const scaleY = availableHeight / slideHeight
-  const scale = Math.min(scaleX, scaleY)
-  
-  // 调试信息
-  console.log('📏 计算缩放:', {
-    wrapperClientWidth: wrapper.clientWidth,
-    wrapperClientHeight: wrapper.clientHeight,
-    availableWidth,
-    availableHeight,
-    slideWidth,
-    slideHeight,
-    scaleX: scaleX.toFixed(3),
-    scaleY: scaleY.toFixed(3),
-    scale: scale.toFixed(3)
-  })
-  
+  const scale = availableWidth / slideWidth
+
   scaleFactor.value = scale
 }
 
-// 当预览列表变化时，确保currentIndex有效
-watch(() => props.previews.length, (newLength) => {
-  if (newLength === 0) {
-    currentIndex.value = 0
-  } else if (currentIndex.value >= newLength) {
-    currentIndex.value = newLength - 1
-  }
-  // 预览变化后重新计算尺寸
+const iframeScalerStyle = computed(() => ({
+  width: '1280px',
+  height: '720px',
+  transform: `scale(${scaleFactor.value})`,
+  transformOrigin: 'top left'
+}))
+
+// 当预览列表变化时重新计算尺寸
+watch(() => props.previews.length, () => {
   nextTick(() => {
-    setTimeout(() => calculateIframeSize(), 100)
+    setTimeout(() => calculateScale(), 100)
   })
 })
 
@@ -172,13 +110,12 @@ let resizeTimer: number | null = null
 function debouncedCalculate() {
   if (resizeTimer) clearTimeout(resizeTimer)
   resizeTimer = window.setTimeout(() => {
-    calculateIframeSize()
+    calculateScale()
   }, 150)
 }
 
 onMounted(() => {
-  // 延迟计算，等待DOM渲染完成
-  setTimeout(() => calculateIframeSize(), 200)
+  setTimeout(() => calculateScale(), 200)
   window.addEventListener('resize', debouncedCalculate)
 })
 
@@ -186,25 +123,6 @@ onUnmounted(() => {
   window.removeEventListener('resize', debouncedCalculate)
   if (resizeTimer) clearTimeout(resizeTimer)
 })
-
-// 上一页
-function goToPrev() {
-  if (currentIndex.value > 0) {
-    currentIndex.value--
-  }
-}
-
-// 下一页
-function goToNext() {
-  if (currentIndex.value < props.previews.length - 1) {
-    currentIndex.value++
-  }
-}
-
-// 跳转到指定页
-function goToSlide(index: number) {
-  currentIndex.value = index
-}
 
 function handleDownload() {
   if (downloadUrl.value) {
@@ -231,6 +149,7 @@ function handleDownload() {
   justify-content: space-between;
   align-items: center;
   background: #fafafa;
+  flex-shrink: 0;
 }
 
 .preview-header h3 {
@@ -282,72 +201,38 @@ function handleDownload() {
   height: 20px;
 }
 
-.thumbnail-nav {
-  padding: 12px;
-  border-bottom: 1px solid #e8e8e8;
-  display: flex;
-  flex-direction: row;
-  gap: 8px;
-  overflow-x: auto;
-  background: #fafafa;
-}
-
-.thumbnail-nav::-webkit-scrollbar {
-  height: 6px;
-}
-
-.thumbnail-nav::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 3px;
-}
-
-.thumbnail-item {
-  width: 40px;
-  height: 40px;
-  border: 2px solid #e8e8e8;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s;
-  background: #fff;
-  flex-shrink: 0;
-}
-
-.thumbnail-item:hover {
-  border-color: #409eff;
-  transform: scale(1.05);
-}
-
-.thumbnail-item.active {
-  border-color: #409eff;
-  background: #ecf5ff;
-}
-
-.thumb-number {
-  font-size: 14px;
-  font-weight: 600;
-  color: #666;
-}
-
-.thumbnail-item.active .thumb-number {
-  color: #409eff;
-}
-
+/* ============ 主预览区域 - 滚动容器 ============ */
 .preview-main {
   flex: 1;
   min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
+  overflow-y: auto;
   background: #f5f5f5;
-  position: relative;
-  overflow: hidden;
+}
+
+.preview-main::-webkit-scrollbar {
+  width: 8px;
+}
+
+.preview-main::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.preview-main::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+.preview-main::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
 }
 
 .empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
   text-align: center;
   color: #999;
 }
@@ -362,12 +247,8 @@ function handleDownload() {
 }
 
 @keyframes rotate {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .generating-text {
@@ -377,38 +258,50 @@ function handleDownload() {
 }
 
 @keyframes blink {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
-.preview-content {
-  width: 100%;
-  height: 100%;
-  position: relative;
+/* ============ 幻灯片列表 ============ */
+.slide-list {
+  padding: 20px;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  gap: 20px;
 }
 
-.iframe-wrapper {
+.slide-card {
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+
+.slide-label {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #666;
+  background: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+/* HTML幻灯片预览 */
+.slide-iframe-wrapper {
   width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: visible;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
   position: relative;
-  padding: 10px;
+  background: #fff;
 }
 
-.iframe-scaler {
-  /* 固定原始尺寸，通过transform缩放 */
-  flex-shrink: 0;
-  transform-origin: center center;
+.slide-iframe-scaler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1280px;
+  height: 720px;
+  transform-origin: top left;
 }
 
 .preview-iframe {
@@ -416,39 +309,15 @@ function handleDownload() {
   height: 720px;
   border: none;
   background: #fff;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+/* 图片幻灯片预览 */
+.preview-image {
+  width: 100%;
   display: block;
 }
 
-.preview-image {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  border-radius: 4px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
-}
-
-.page-indicator {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  padding: 6px 12px;
-  border-radius: 16px;
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.preview-controls {
-  padding: 16px 20px;
-  border-top: 1px solid #e8e8e8;
-  display: flex;
-  justify-content: center;
-  background: #fafafa;
-}
-
-/* 响应式设计 */
+/* ============ 响应式设计 ============ */
 @media (max-width: 768px) {
   .preview-header {
     padding: 12px 16px;
@@ -458,21 +327,9 @@ function handleDownload() {
     font-size: 14px;
   }
 
-  .thumbnail-nav {
-    padding: 8px;
-  }
-
-  .thumbnail-item {
-    width: 32px;
-    height: 32px;
-  }
-
-  .thumb-number {
-    font-size: 12px;
-  }
-
-  .preview-main {
+  .slide-list {
     padding: 12px;
+    gap: 12px;
   }
 }
 </style>

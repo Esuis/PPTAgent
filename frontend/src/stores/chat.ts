@@ -307,19 +307,38 @@ export const useChatStore = defineStore('chat', () => {
   // 需要过滤的内部工具名（模型推理等，不是真实工具）
   const INTERNAL_TOOLS = new Set(['think', 'thinking', 'thought', 'reflection'])
 
-  // 判断是否为过程型消息（系统消息/含真实tool_calls的assistant消息）
+  // 判断是否为过程型消息（系统消息/含tool_calls的assistant消息/含thinking的content）
   function isProcessMessage(data: any): boolean {
     const role = data.role || ''
     // 系统消息是过程步骤
     if (role === 'system' || role === 'System') {
       return true
     }
-    // assistant消息如果有真实tool_calls（排除内部工具），也是过程步骤
+    // assistant消息如果有tool_calls（包括thinking等内部工具），是过程步骤
     if (data.tool_calls && data.tool_calls.length > 0) {
-      const realToolCalls = filterRealToolCalls(data.tool_calls)
-      if (realToolCalls.length > 0) {
+      return true
+    }
+    // 兼容旧后端：content是thinking工具调用序列化的JSON，也算过程步骤
+    if ((role === 'assistant' || role === 'Assistant')) {
+      const content = (data.content || '').trim()
+      if (content && isThinkingJsonContent(content)) {
         return true
       }
+    }
+    return false
+  }
+
+  // 检测content是否为thinking工具调用序列化的JSON
+  function isThinkingJsonContent(content: string): boolean {
+    if (!content.startsWith('{') && !content.startsWith('[')) return false
+    try {
+      const parsed = JSON.parse(content)
+      // 单个thinking工具调用
+      if (parsed.name && INTERNAL_TOOLS.has(parsed.name)) return true
+      // 多个工具调用的数组
+      if (Array.isArray(parsed) && parsed.some((item: any) => item.name && INTERNAL_TOOLS.has(item.name))) return true
+    } catch {
+      // 不是JSON，当做普通文本
     }
     return false
   }
@@ -337,15 +356,52 @@ export const useChatStore = defineStore('chat', () => {
     if (role === 'tool' || role === 'Tool') {
       return true
     }
-    // assistant消息只包含内部工具调用且无文本
-    if ((role === 'assistant' || role === 'Assistant') && data.tool_calls) {
-      const realToolCalls = filterRealToolCalls(data.tool_calls)
+    // assistant消息：检查是否有任何有效内容
+    if ((role === 'assistant' || role === 'Assistant')) {
       const content = (data.content || '').trim()
-      if (realToolCalls.length === 0 && !content) {
+      // 有tool_calls的情况
+      if (data.tool_calls) {
+        const realToolCalls = filterRealToolCalls(data.tool_calls)
+        const hasThinkingInToolCalls = extractThinkingContent(data.tool_calls).trim().length > 0
+        // 没有真实工具、没有文本、也没有thinking内容 → 跳过
+        if (realToolCalls.length === 0 && !content && !hasThinkingInToolCalls) {
+          return true
+        }
+      }
+      // 没有tool_calls但有content的情况
+      // 兼容旧后端：content可能是thinking序列化JSON
+      if (!data.tool_calls && content) {
+        // content是thinking JSON → 不跳过
+        if (isThinkingJsonContent(content)) return false
+        // content是普通文本 → 不跳过
+        return false
+      }
+      // 没有tool_calls且没有content → 跳过
+      if (!data.tool_calls && !content) {
         return true
       }
     }
     return false
+  }
+
+  // 从tool_calls中提取thinking/thought等内部工具的思考内容
+  function extractThinkingContent(toolCalls: any[]): string {
+    if (!toolCalls) return ''
+    const parts: string[] = []
+    toolCalls.forEach((tc: any) => {
+      if (INTERNAL_TOOLS.has(tc.name || '')) {
+        try {
+          const args = typeof tc.arguments === 'string' ? JSON.parse(tc.arguments) : tc.arguments
+          const thought = args?.thought || args?.thinking || args?.content || ''
+          if (thought && thought.trim()) {
+            parts.push(thought.trim())
+          }
+        } catch {
+          // JSON解析失败，忽略
+        }
+      }
+    })
+    return parts.join('\n')
   }
 
   // 获取最后一条assistant消息（用于向其追加步骤/内容）
@@ -580,44 +636,91 @@ export const useChatStore = defineStore('chat', () => {
 
     // assistant 消息
     const parts: string[] = []
-    const content = data.content || ''
+    const content = (data.content || '').trim()
 
-    // 如果有工具调用，优先显示工具调用摘要（过滤内部工具）
+    // 如果有工具调用，处理工具调用摘要
     if (data.tool_calls && data.tool_calls.length > 0) {
+      // 先提取内部工具（thinking）的思考内容
+      const thinkingContent = extractThinkingContent(data.tool_calls)
+      if (thinkingContent) {
+        parts.push(thinkingContent)
+      }
+
+      // 再提取真实工具调用的摘要
       const realToolCalls = filterRealToolCalls(data.tool_calls)
       realToolCalls.forEach((tool: any) => {
         parts.push(summarizeToolCall(tool.name, tool.arguments))
       })
-      // 如果有真实工具调用，显示摘要；否则降级为文本
+
       if (parts.length > 0) {
-        // 如果同时有文本内容，也附带
-        if (content && content.trim()) {
-          const trimmed = content.trim()
-          if (trimmed.length < 100) {
-            parts.unshift(trimmed)
-          }
+        // 如果同时有文本内容（非tool_call JSON），也附带
+        if (content && !isThinkingJsonContent(content) && content.length < 100) {
+          parts.unshift(content)
         }
         return parts.join('\n')
       }
-      // 只有内部工具调用，降级为普通文本
     }
 
-    // 普通assistant文本内容：如果内容较短直接显示，较长则凝练
+    // 没有tool_calls字段时，尝试从content中提取thinking内容
+    // 兼容旧后端：旧版yield_msg.text会把thinking工具调用序列化进content
     if (content) {
-      const trimmed = content.trim()
-      // 如果内容很短，直接显示
-      if (trimmed.length < 150) {
-        return trimmed
+      const extractedFromContent = tryExtractThinkingFromContent(content)
+      if (extractedFromContent) {
+        return extractedFromContent
       }
-      // 长内容：取前几行作为摘要
-      const lines = trimmed.split('\n').filter((l: string) => l.trim())
+
+      // 普通文本内容
+      if (content.length < 150) {
+        return content
+      }
+      const lines = content.split('\n').filter((l: string) => l.trim())
       if (lines.length <= 3) {
-        return trimmed
+        return content
       }
       return lines.slice(0, 2).join('\n') + '\n...'
     }
 
-    return content
+    return ''
+  }
+
+  // 从content字段中提取thinking内容（兼容旧后端）
+  // 旧后端yield_msg.text会将tool_calls序列化进content，格式如：
+  //   {"name":"thinking","arguments":"{\"thought\":\"...\"}"}
+  //   或多个tool_call的数组字符串
+  function tryExtractThinkingFromContent(content: string): string {
+    // 单个tool_call JSON
+    if (content.startsWith('{')) {
+      try {
+        const obj = JSON.parse(content)
+        if (obj.name && INTERNAL_TOOLS.has(obj.name) && obj.arguments) {
+          const args = typeof obj.arguments === 'string' ? JSON.parse(obj.arguments) : obj.arguments
+          const thought = args?.thought || args?.thinking || args?.content || ''
+          if (thought && thought.trim()) return thought.trim()
+        }
+      } catch {
+        // 不是有效JSON，当做普通文本处理
+      }
+    }
+    // 多个tool_call的数组字符串
+    if (content.startsWith('[')) {
+      try {
+        const arr = JSON.parse(content)
+        if (Array.isArray(arr)) {
+          const thoughts: string[] = []
+          for (const item of arr) {
+            if (item.name && INTERNAL_TOOLS.has(item.name) && item.arguments) {
+              const args = typeof item.arguments === 'string' ? JSON.parse(item.arguments) : item.arguments
+              const thought = args?.thought || args?.thinking || args?.content || ''
+              if (thought && thought.trim()) thoughts.push(thought.trim())
+            }
+          }
+          if (thoughts.length > 0) return thoughts.join('\n')
+        }
+      } catch {
+        // 不是有效JSON
+      }
+    }
+    return ''
   }
 
   function clearChat() {
